@@ -1,8 +1,29 @@
 import { Bell, LogOut, Mail, Menu, Search, FileText } from "lucide-react";
-import { useNavigate } from "react-router-dom";
-import { getCurrentUser, logout, ROLES } from "../services/auth";
-import { useState, useEffect, useRef } from "react";
+import { useNavigate, useLocation } from "react-router-dom";
+import { getCurrentUser, logout, normalizeUserSession, ROLES } from "../services/auth";
+import { useState, useEffect, useRef, useMemo } from "react";
 import { menuByRole } from "../constants/menu";
+
+const SERVER_URL = "http://localhost:3000";
+
+function getAvatarUrl(path, cacheKey) {
+  if (!path) return "";
+
+  const normalizedPath = String(path);
+
+  if (/^data:/i.test(normalizedPath)) {
+    return normalizedPath;
+  }
+
+  if (/^https?:\/\//i.test(normalizedPath)) {
+    return cacheKey 
+      ? `${normalizedPath}${normalizedPath.includes("?") ? "&" : "?"}v=${cacheKey}`
+      : normalizedPath;
+  }
+
+  const baseUrl = `${SERVER_URL}${normalizedPath.startsWith("/") ? "" : "/"}${normalizedPath}`;
+  return cacheKey ? `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}v=${cacheKey}` : baseUrl;
+}
 
 export default function Header({
   role = ROLES.staff,
@@ -14,11 +35,97 @@ export default function Header({
   initialSearchTerm = "", // Prop mới cho giá trị tìm kiếm ban đầu
 }) {
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // 🛡️ LẤY THÔNG TIN USER THỰC TẾ TỪ LOCALSTORAGE ĐỂ HIỂN THỊ ĐÚNG PROFILE
+  // 💡 CẢI TIẾN: Khởi tạo state đồng bộ từ localStorage giúp Header có dữ liệu ngay lập tức khi load trang/chuyển trang
+  const [currentUser, setCurrentUser] = useState(() => {
+    const savedUser = localStorage.getItem("user");
+    if (savedUser) {
+      try {
+        return normalizeUserSession(JSON.parse(savedUser));
+      } catch (e) {
+        console.error("Lỗi đọc dữ liệu người dùng tại Header:", e);
+      }
+    }
+    return null;
+  });
+  const [avatarError, setAvatarError] = useState(false);
+
+  const syncCurrentUser = () => {
+    const savedUser = localStorage.getItem("user");
+    if (savedUser) {
+      try {
+        const parsed = normalizeUserSession(JSON.parse(savedUser));
+        setCurrentUser((prev) => {
+          // Tránh re-render thừa nếu dữ liệu không đổi
+          if (JSON.stringify(prev) === JSON.stringify(parsed)) return prev;
+          return parsed;
+        });
+      } catch (e) {
+        console.error("Lỗi đọc dữ liệu người dùng tại Header:", e);
+      }
+    } else {
+      setCurrentUser(null);
+    }
+  };
+
+  // 🔁 Re-sync mỗi khi component mount, mỗi khi route đổi (sau login luôn navigate sang trang khác)
+  // và khi nhận được sự kiện cập nhật user / storage thay đổi.
+  useEffect(() => {
+    syncCurrentUser();
+  }, [location.pathname]);
+
+  useEffect(() => {
+    const handleUserUpdated = () => syncCurrentUser();
+    const handleStorageUpdated = (event) => {
+      if (event.key === "user") {
+        syncCurrentUser();
+      }
+    };
+
+    window.addEventListener("user-updated", handleUserUpdated);
+    window.addEventListener("storage", handleStorageUpdated);
+
+    return () => {
+      window.removeEventListener("user-updated", handleUserUpdated);
+      window.removeEventListener("storage", handleStorageUpdated);
+    };
+  }, []);
+
   const info = getCurrentUser(role);
-  const displayUserName = userName || info.userName;
-  const displayRoleName = roleName || info.roleName;
+
+  // Ưu tiên: Props truyền vào > Dữ liệu profile thực tế > Dữ liệu mặc định theo Role
+  const displayUserName = userName || currentUser?.TenNhanVien || info.userName;
+  const displayRoleName = roleName || currentUser?.TenVaiTro || info.roleName;
   const displaySearchPlaceholder = searchPlaceholder || info.searchPlaceholder;
-  const displayAvatarUrl = info.avatarUrl;
+  
+  // 💡 TỐI ƯU: Sử dụng useMemo để tránh tính toán lại URL ảnh và gây flicker (nháy) khi re-render
+  const displayAvatarUrl = useMemo(() => {
+    const rawAvatar = currentUser?.AnhDaiDien || currentUser?.image || currentUser?.avatar || info.avatarUrl;
+    if (!rawAvatar) return null;
+    // Chỉ thêm cacheKey (avatarVersion) nếu thực sự có để tránh trình duyệt tải lại ảnh liên tục
+    return getAvatarUrl(rawAvatar, currentUser?.avatarVersion);
+  }, [currentUser?.AnhDaiDien, currentUser?.image, currentUser?.avatar, currentUser?.avatarVersion, info.avatarUrl]);
+
+  useEffect(() => {
+    // Reset trạng thái lỗi khi URL ảnh thay đổi (ví dụ khi user đổi ảnh mới)
+    if (displayAvatarUrl) setAvatarError(false);
+  }, [displayAvatarUrl]);
+
+  // Logic tạo chữ cái đại diện nếu không có ảnh (Ví dụ: "Hoàng Dũng" -> "HD")
+  const getAvatarInitials = () => {
+    const name = currentUser?.TenNhanVien || displayUserName;
+    if (name) {
+      const words = name.trim().split(" ");
+      if (words.length > 1) {
+        return (words[0][0] + words[words.length - 1][0]).toUpperCase();
+      }
+      return name[0].toUpperCase();
+    }
+    return "UN";
+  };
+
   const [searchTerm, setSearchTerm] = useState(initialSearchTerm);
   const [suggestions, setSuggestions] = useState([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
@@ -143,7 +250,20 @@ export default function Header({
           className="flex items-center gap-3 px-3 py-1.5 rounded-xl border border-transparent hover:border-gray-100 hover:bg-gray-50 active:bg-gray-100 cursor-pointer transition-all"
           title="Xem trang cá nhân"
         >
-          <img src={displayAvatarUrl} alt="avatar" className="h-10 w-10 rounded-full object-cover border border-gray-200 shadow-sm" />
+          {/* 🖼️ XỬ LÝ ẢNH CHUYÊN NGHIỆP: Nếu có URL và chưa bị lỗi thì hiện ảnh, ngược lại hiện Initials */}
+          {displayAvatarUrl && !avatarError ? (
+            <img
+              src={displayAvatarUrl}
+              alt="avatar"
+              className="h-10 w-10 rounded-full object-cover border border-gray-200 shadow-sm"
+              // 🛡️ Khi trình duyệt không load được ảnh (404, 500...), hàm này sẽ kích hoạt fallback
+              onError={() => setAvatarError(true)}
+            />
+          ) : (
+            <div className="h-10 w-10 rounded-full bg-indigo-600 text-white flex items-center justify-center font-bold text-xs shadow-sm border border-indigo-700">
+              {getAvatarInitials()}
+            </div>
+          )}
           <div className="leading-4 select-none">
             <p className="text-sm font-semibold text-gray-800">{displayUserName}</p>
             <p className="text-xs text-gray-400 mt-0.5">{displayRoleName}</p>

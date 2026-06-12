@@ -6,9 +6,9 @@ const { writeLog } = require("./logController");
 const getAllPhieuBaoHanh = async (req, res) => {
     try {
         const pool = await poolPromise;
-        const trang    = parseInt(req.query.trang)    || 1;
-        const soLuong  = parseInt(req.query.soLuong)  || 10;
-        const offset   = (trang - 1) * soLuong;
+        const trang   = parseInt(req.query.trang)   || 1;
+        const soLuong = parseInt(req.query.soLuong) || 10;
+        const offset  = (trang - 1) * soLuong;
         const { loaiPhieu, tuKhoa, tuNgay, denNgay } = req.query;
 
         let where = "WHERE 1=1";
@@ -21,8 +21,8 @@ const getAllPhieuBaoHanh = async (req, res) => {
                 OR CAST(pb.MaPhieuBH AS VARCHAR) LIKE '%' + @tuKhoa + '%'
             )`;
         }
-        if (tuNgay)    where += " AND CAST(pb.NgayTaoPhieu AS DATE) >= @tuNgay";
-        if (denNgay)   where += " AND CAST(pb.NgayTaoPhieu AS DATE) <= @denNgay";
+        if (tuNgay)  where += " AND CAST(pb.NgayTaoPhieu AS DATE) >= @tuNgay";
+        if (denNgay) where += " AND CAST(pb.NgayTaoPhieu AS DATE) <= @denNgay";
 
         const buildReq = (r) => {
             if (loaiPhieu) r.input("loaiPhieu", sql.NVarChar, loaiPhieu);
@@ -41,18 +41,17 @@ const getAllPhieuBaoHanh = async (req, res) => {
         const tongSo = tongResult.recordset[0].TongSo;
 
         const dataReq = buildReq(pool.request());
-        dataReq.input("offset",  sql.Int, offset);
-        dataReq.input("soLuong", sql.Int, soLuong);
+        dataReq.input("offset",   sql.Int, offset);
+        dataReq.input("soLuong",  sql.Int, soLuong);
 
         const result = await dataReq.query(`
             SELECT
                 pb.MaPhieuBH,
                 pb.LoaiPhieuBH,
                 pb.MaDoiTac,
-                -- Tên đối tác: nếu KHACH_HANG thì lấy TenKH, nếu NHA_CUNG_CAP thì lấy TenNCC
                 CASE
-                    WHEN pb.LoaiPhieuBH = 'KHACH_HANG'    THEN kh.TenKH
-                    WHEN pb.LoaiPhieuBH = 'NHA_CUNG_CAP'  THEN ncc.TenNCC
+                    WHEN pb.LoaiPhieuBH = 'KHACH_HANG'   THEN kh.TenKH
+                    WHEN pb.LoaiPhieuBH = 'NHA_CUNG_CAP' THEN ncc.TenNCC
                     ELSE NULL
                 END AS TenDoiTac,
                 pb.SoHopDong,
@@ -60,22 +59,44 @@ const getAllPhieuBaoHanh = async (req, res) => {
                 pb.MaNhanVienLap,
                 nv.TenNhanVien AS TenNhanVienLap,
                 pb.GhiChuTongQuat,
-                -- Đổi alias thành SoLuong để khớp với FE
-                (SELECT ISNULL(SUM(CAST(bh.SoLuong AS INT)), 0) FROM BaoHanhSanPham bh WHERE bh.MaPhieuBH = pb.MaPhieuBH) AS SoLuong,
-                -- Gộp mã chứng từ gốc (PX/PN) vào key MaGoc để FE hiển thị
+
+                (SELECT TOP 1 b.HanBaoHanh_KhachHang
+                 FROM BaoHanhSanPham b
+                 WHERE b.MaPhieuBH = pb.MaPhieuBH
+                   AND b.HanBaoHanh_KhachHang IS NOT NULL
+                 ORDER BY b.HanBaoHanh_KhachHang ASC) AS HanBaoHanh_KhachHang,
+
+                (SELECT TOP 1 b.HanBaoHanh_NCC
+                 FROM BaoHanhSanPham b
+                 WHERE b.MaPhieuBH = pb.MaPhieuBH
+                   AND b.HanBaoHanh_NCC IS NOT NULL
+                 ORDER BY b.HanBaoHanh_NCC ASC) AS HanBaoHanh_NCC,
+
+                (SELECT ISNULL(SUM(CAST(b.SoLuong AS INT)), 0)
+                 FROM BaoHanhSanPham b
+                 WHERE b.MaPhieuBH = pb.MaPhieuBH) AS SoLuong,
+
                 ISNULL(
-                    (SELECT TOP 1 px.MaPhieu FROM BaoHanhSanPham bh LEFT JOIN PhieuXuat px ON bh.MaPhieuXuat = px.MaPhieuXuat WHERE bh.MaPhieuBH = pb.MaPhieuBH AND bh.MaPhieuXuat IS NOT NULL),
-                    (SELECT TOP 1 pn.MaPhieu FROM BaoHanhSanPham bh LEFT JOIN PhieuNhap pn ON bh.MaPhieuNhap = pn.MaPhieuNhap WHERE bh.MaPhieuBH = pb.MaPhieuBH AND bh.MaPhieuNhap IS NOT NULL)
+                    (SELECT TOP 1 px.MaPhieu
+                     FROM BaoHanhSanPham b
+                     LEFT JOIN PhieuXuat px ON b.MaPhieuXuat = px.MaPhieuXuat
+                     WHERE b.MaPhieuBH = pb.MaPhieuBH AND b.MaPhieuXuat IS NOT NULL),
+                    (SELECT TOP 1 pn.MaPhieu
+                     FROM BaoHanhSanPham b
+                     LEFT JOIN PhieuNhap pn ON b.MaPhieuNhap = pn.MaPhieuNhap
+                     WHERE b.MaPhieuBH = pb.MaPhieuBH AND b.MaPhieuNhap IS NOT NULL)
                 ) AS MaGoc,
-                -- Lấy mã chứng từ gốc đại diện (nếu có)
-                (SELECT TOP 1 px.MaPhieu 
-                 FROM BaoHanhSanPham bh 
-                 LEFT JOIN PhieuXuat px ON bh.MaPhieuXuat = px.MaPhieuXuat 
-                 WHERE bh.MaPhieuBH = pb.MaPhieuBH AND bh.MaPhieuXuat IS NOT NULL) AS MaPhieuXuatHienThi,
-                (SELECT TOP 1 pn.MaPhieu 
-                 FROM BaoHanhSanPham bh 
-                 LEFT JOIN PhieuNhap pn ON bh.MaPhieuNhap = pn.MaPhieuNhap 
-                 WHERE bh.MaPhieuBH = pb.MaPhieuBH AND bh.MaPhieuNhap IS NOT NULL) AS MaPhieuNhapHienThi
+
+                (SELECT TOP 1 px.MaPhieu
+                 FROM BaoHanhSanPham b
+                 LEFT JOIN PhieuXuat px ON b.MaPhieuXuat = px.MaPhieuXuat
+                 WHERE b.MaPhieuBH = pb.MaPhieuBH AND b.MaPhieuXuat IS NOT NULL) AS MaPhieuXuatHienThi,
+
+                (SELECT TOP 1 pn.MaPhieu
+                 FROM BaoHanhSanPham b
+                 LEFT JOIN PhieuNhap pn ON b.MaPhieuNhap = pn.MaPhieuNhap
+                 WHERE b.MaPhieuBH = pb.MaPhieuBH AND b.MaPhieuNhap IS NOT NULL) AS MaPhieuNhapHienThi
+
             FROM PhieuBaoHanh pb
             LEFT JOIN NhanVien   nv  ON pb.MaNhanVienLap = nv.MaNhanVien
             LEFT JOIN KhachHang  kh  ON pb.LoaiPhieuBH = 'KHACH_HANG'   AND pb.MaDoiTac = kh.MaKH
@@ -90,6 +111,7 @@ const getAllPhieuBaoHanh = async (req, res) => {
             data: result.recordset,
             phanTrang: { trang, soLuong, tongSo, tongTrang: Math.ceil(tongSo / soLuong) }
         });
+
     } catch (error) {
         console.error("Lỗi lấy danh sách phiếu bảo hành:", error);
         return res.status(500).json({ success: false, message: error.message });

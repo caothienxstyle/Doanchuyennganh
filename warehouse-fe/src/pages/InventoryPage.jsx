@@ -1,8 +1,8 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import MainLayout from "../layouts/MainLayout";
 import DataTable from "../components/DataTable";
 import StatusBadge from "../components/StatusBadge";
-import { Search, Package, AlertTriangle, Warehouse, ClipboardCheck, FilePlus, Loader2, XCircle } from "lucide-react";
+import { Search, Package, AlertTriangle, Warehouse, ClipboardCheck, FilePlus, Loader2, XCircle, Plus, MapPin } from "lucide-react";
 import { getProducts } from "../services/productService";
 import { 
   getTonKhoItems, 
@@ -91,6 +91,7 @@ function buildInventoryRows(products = [], tonKhoItems = []) {
 export default function InventoryPage() {
   const [inventoryRows, setInventoryRows] = useState([]);
   const [productsList, setProductsList] = useState([]); 
+  const [khoList, setKhoList] = useState([]); 
   const [viTriList, setViTriList] = useState([]); 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -98,6 +99,7 @@ export default function InventoryPage() {
   const [statusFilter, setStatusFilter] = useState(""); // 🔍 State lọc nhanh theo trạng thái (KPI)
   const [searchTerm, setSearchTerm] = useState("");
   const [currentPage, setCurrentPage] = useState(1);
+  const [productSearch, setProductSearch] = useState(""); // 🔍 Tìm kiếm SP trong modal
   const [itemsPerPage, setItemsPerPage] = useState(10);
   
   // 🔢 State phụ phục vụ việc gõ số ô nhập trang
@@ -130,6 +132,20 @@ export default function InventoryPage() {
     }
   };
 
+  const loadKhoList = async () => {
+    try {
+      const token = localStorage.getItem("token") || "";
+      const response = await fetch("http://localhost:3000/kho/danhsach", {
+        method: "GET",
+        headers: { "Authorization": `Bearer ${token}` }
+      });
+      const res = await response.json();
+      if (res.success) setKhoList(res.data || []);
+    } catch (err) {
+      console.error("Lỗi tải danh sách kho:", err);
+    }
+  };
+
   async function loadInventory() {
     try {
       setLoading(true);
@@ -158,6 +174,7 @@ export default function InventoryPage() {
   useEffect(() => {
     loadInventory();
     loadViTriKho();
+    loadKhoList();
   }, []);
 
   // 🚀 Tự động khôi phục bộ lọc trạng thái từ Dashboard (nếu có)
@@ -175,7 +192,8 @@ export default function InventoryPage() {
     const matchesSearch = !search || (
       row.code.toLowerCase().includes(search) || 
       row.name.toLowerCase().includes(search) ||
-      row.location.toLowerCase().includes(search)
+      row.location.toLowerCase().includes(search) ||
+      (khoList.find(k => String(k.MaKho) === String(row.rawMaKho))?.TenKho || "").toLowerCase().includes(search)
     );
 
     const matchesStatus = !statusFilter || (
@@ -186,6 +204,16 @@ export default function InventoryPage() {
 
     return matchesSearch && matchesStatus;
   });
+
+  // 🚀 Lọc danh sách sản phẩm trong Modal để người dùng chọn nhanh hơn
+  const filteredProductsForModal = useMemo(() => {
+    if (!productSearch.trim()) return productsList;
+    const s = productSearch.toLowerCase();
+    return productsList.filter(p => 
+      String(p.name || p.TenSanPham || "").toLowerCase().includes(s) ||
+      String(p.code || p.MaSP || "").toLowerCase().includes(s)
+    );
+  }, [productsList, productSearch]);
 
   // Tính toán phân trang
   const totalItems = filteredRows.length;
@@ -230,22 +258,33 @@ export default function InventoryPage() {
 
   const handleOpenCreate = () => {
     setModalMode("CREATE");
+    setProductSearch(""); // Reset ô tìm kiếm khi mở modal tạo mới
     setFormData({ 
-      MaKho: "1", 
+      MaKho: khoList.length > 0 ? String(khoList[0].MaKho) : "", 
       MaSanPham: "", 
-      MaViTriCode: viTriList[0]?.MaViTriCode || "VT001", 
-      SoLuongTon: 0 
+      MaViTriCode: "", 
+      SoLuongTon: "" 
     });
     setIsModalOpen(true);
   };
 
   const handleOpenEdit = (row) => {
     setModalMode("UPDATE");
+    
+    // 🌟 Tìm thông tin sản phẩm từ danh sách để hiển thị Mã Sp thay vì ID hệ thống
+    const product = productsList.find(p => 
+      String(p.id || p.MaSanPham || p.masanpham) === String(row.rawMaSanPham)
+    );
+    const displayString = product 
+      ? `[${product.code || product.MaSP}] - ${product.name || product.TenSanPham}` 
+      : `Sản phẩm #${row.rawMaSanPham}`;
+
     setFormData({
       MaKho: Number(row.rawMaKho),
       MaSanPham: Number(row.rawMaSanPham),
       MaViTriCode: String(row.rawMaViTriCode), 
       SoLuongTon: row.quantity,
+      ProductDisplay: displayString // Dùng để hiển thị thông tin rõ ràng hơn trong Modal
     });
     setIsModalOpen(true);
   };
@@ -401,17 +440,30 @@ export default function InventoryPage() {
               { 
                 key: "code", 
                 label: "Mã SP", 
-                render: (v) => <span className="font-mono font-bold text-indigo-600 text-xs">#{v}</span> 
+                render: (v) => <span className="font-mono font-bold text-indigo-600 text-xs">{v}</span> 
               },
               { key: "name", label: "Tên sản phẩm", render: (v) => <span className="font-semibold text-gray-800">{v}</span> },
               { key: "quantity", label: "Số lượng tồn", render: (val) => <span className="font-semibold text-gray-800">{val}</span> },
               { key: "minQuantity", label: "Tối thiểu", render: (v) => <span className="text-gray-400 font-mono text-xs">{v}</span> },
+                            { 
+                key: "warehouse", 
+                label: "Kho lưu trữ", 
+                render: (_, row) => {
+                  const kho = khoList.find(k => String(k.MaKho) === String(row.rawMaKho));
+                  return (
+                    <div className="flex items-center gap-1.5 font-bold text-gray-700 text-[11px] uppercase whitespace-nowrap">
+                      <Warehouse size={12} className="text-blue-500"/>
+                      {kho ? kho.TenKho : `Kho #${row.rawMaKho}`}
+                    </div>
+                  );
+                }
+              },
               { 
                 key: "location", 
                 label: "Vị trí kho", 
                 render: (val) => (
                   <div className="flex items-center gap-1.5 font-medium text-blue-600 font-mono bg-blue-50 px-2 py-1 rounded-lg border border-blue-100 w-fit">
-                    <Warehouse size={12}/> {val}
+                    <MapPin size={12} className="text-indigo-400"/> {val}
                   </div>
                 ) 
               },
@@ -421,7 +473,7 @@ export default function InventoryPage() {
   render: (value) => {
     if (value === "Hết hàng") {
       return (
-        <span className="rounded-full px-2.5 py-1 text-xs font-medium bg-red-50 text-red-600 border border-red-100">
+        <span className=" rounded-full px-2.5 py-1  text-xs font-medium bg-red-50 text-red-600 border border-red-100 whitespace-nowrap">
           Hết hàng
         </span>
       );
@@ -521,39 +573,94 @@ export default function InventoryPage() {
 
             <form onSubmit={handleSubmitForm} className="p-6 space-y-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Mã Kho (Số nguyên)</label>
-                <input
-                  type="number"
+                <label className="block text-sm font-medium text-gray-700 mb-1">Kho nhận hàng</label>
+                <select
                   required
-                  disabled={modalMode === "UPDATE"}
-                  className="w-full border rounded-lg p-2 text-sm bg-white disabled:bg-gray-100"
+                  className="w-full border rounded-lg p-2 text-sm bg-white disabled:bg-gray-100 font-bold text-gray-700"
                   value={formData.MaKho}
-                  onChange={(e) => setFormData({ ...formData, MaKho: e.target.value })}
-                />
+                  onChange={(e) => setFormData({ ...formData, MaKho: e.target.value, MaViTriCode: "" })}
+                >
+                  <option value="">-- Chọn kho lưu trữ --</option>
+                  {khoList.map((kho) => (
+                    <option key={kho.MaKho} value={kho.MaKho}>
+                      {kho.TenKho} {kho.DiaChi ? `(${kho.DiaChi})` : ""}
+                    </option>
+                  ))}
+                </select>
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Sản phẩm</label>
                 {modalMode === "CREATE" ? (
-                  <select
-                    required
-                    className="w-full border rounded-lg p-2 text-sm bg-white"
-                    value={formData.MaSanPham}
-                    onChange={(e) => setFormData({ ...formData, MaSanPham: e.target.value })}
-                  >
-                    <option value="">-- Chọn sản phẩm cần cấu hình --</option>
-                    {productsList.map((p) => (
-                      <option key={p.id || p.MaSanPham} value={p.id || p.MaSanPham}>
-                        [{p.code || p.MaSP}] - {p.name || p.TenSanPham}
-                      </option>
-                    ))}
-                  </select>
+                  <div className="space-y-3">
+                    {!formData.MaSanPham ? (
+                      <div className="space-y-2">
+                        <div className="relative">
+                          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400" />
+                          <input 
+                            type="text"
+                            autoFocus
+                            placeholder="Gõ tên hoặc mã sản phẩm để tìm nhanh..."
+                            className="w-full pl-8 pr-3 py-2.5 border rounded-xl text-sm outline-none focus:border-blue-500 bg-white shadow-sm transition-all"
+                            value={productSearch}
+                            onChange={(e) => setProductSearch(e.target.value)}
+                          />
+                        </div>
+                        
+                        <div className="max-h-44 overflow-y-auto border border-gray-100 rounded-xl bg-gray-50/50 divide-y divide-gray-100 scrollbar-thin shadow-inner">
+                          {filteredProductsForModal.length > 0 ? (
+                            filteredProductsForModal.slice(0, 50).map((p) => (
+                              <div 
+                                key={p.id || p.MaSanPham}
+                                onClick={() => {
+                                  setFormData({ ...formData, MaSanPham: p.id || p.MaSanPham });
+                                  setProductSearch("");
+                                }}
+                                className="p-3 hover:bg-blue-50 cursor-pointer transition-all flex items-center justify-between group"
+                              >
+                                <div className="flex flex-col">
+                                  <span className="text-xs font-bold text-gray-700 group-hover:text-blue-700">{p.name || p.TenSanPham}</span>
+                                  <span className="text-[10px] text-gray-400 font-mono mt-0.5">Mã SP: {p.code || p.MaSP}</span>
+                                </div>
+                                <Plus size={14} className="text-gray-300 group-hover:text-blue-500 transition-colors" />
+                              </div>
+                            ))
+                          ) : (
+                            <div className="p-4 text-center text-xs text-gray-400 italic">Không tìm thấy sản phẩm này...</div>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between p-3 border-2 border-blue-100 bg-blue-50/50 rounded-2xl animate-in zoom-in-95 duration-200">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-sm">
+                            <Package size={18} />
+                          </div>
+                          <div>
+                            <p className="text-xs font-black text-blue-900">
+                              {productsList.find(p => String(p.id || p.MaSanPham) === String(formData.MaSanPham))?.name || "Sản phẩm đã chọn"}
+                            </p>
+                            <p className="text-[10px] font-bold text-blue-500 font-mono uppercase">
+                              Mã SP: {productsList.find(p => String(p.id || p.MaSanPham) === String(formData.MaSanPham))?.code || "---"}
+                            </p>
+                          </div>
+                        </div>
+                        <button 
+                          type="button"
+                          onClick={() => setFormData({ ...formData, MaSanPham: "" })}
+                          className="w-8 h-8 flex items-center justify-center rounded-full bg-blue-100 text-blue-600 hover:bg-red-50 hover:text-red-500 transition-all shadow-sm"
+                        >
+                          <XCircle size={18} />
+                        </button>
+                      </div>
+                    )}
+                  </div>
                 ) : (
                   <input
                     type="text"
                     disabled
-                    className="w-full border rounded-lg p-2 text-sm bg-gray-100 font-medium"
-                    value={`ID mặt hàng: ${formData.MaSanPham}`}
+                    className="w-full border rounded-lg p-2 text-sm bg-gray-100 font-bold text-gray-700"
+                    value={formData.ProductDisplay || `Sản phẩm ID: ${formData.MaSanPham}`}
                   />
                 )}
               </div>
@@ -562,15 +669,19 @@ export default function InventoryPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Vị Trí Lưu Trữ Hàng Hóa
                 </label>
-                {modalMode === "CREATE" ? (
-                  viTriList.length > 0 ? (
+                {(() => {
+                    // 🛡️ Tự động lọc vị trí kho dựa trên Kho đang được chọn (áp dụng cho cả Thêm và Sửa)
+                    const filteredViTri = viTriList.filter(vt => String(vt.MaKho) === String(formData.MaKho));
+                    
+                    return filteredViTri.length > 0 ? (
                     <select
                       required
                       className="w-full border rounded-lg p-2 text-sm bg-white font-mono font-bold text-blue-600"
                       value={formData.MaViTriCode}
                       onChange={(e) => setFormData({ ...formData, MaViTriCode: e.target.value })}
                     >
-                      {viTriList.map((vt) => (
+                      <option value="">-- Chọn vị trí kệ --</option>
+                      {filteredViTri.map((vt) => (
                         <option key={vt.MaViTriCode} value={vt.MaViTriCode}>
                           {vt.TenViTriHienThi || `Mã: ${vt.MaViTriCode}`} {vt.GhiChu ? `(${vt.GhiChu})` : ''}
                         </option>
@@ -585,24 +696,17 @@ export default function InventoryPage() {
                       value={formData.MaViTriCode}
                       onChange={(e) => setFormData({ ...formData, MaViTriCode: e.target.value })}
                     />
-                  )
-                ) : (
-                  <input
-                    type="text"
-                    disabled
-                    className="w-full border rounded-lg p-2 text-sm bg-gray-100 font-mono font-bold text-gray-600"
-                    value={`Mã vị trí hiện tại: ${formData.MaViTriCode}`}
-                  />
-                )}
+                    );
+                  })()}
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Số lượng tồn kho hiện tại</label>
                 <input
-                  type="number"
                   min="0"
                   required
-                  className="w-full border rounded-lg p-2 text-sm font-bold text-red-600"
+                 
+                  className="w-full border rounded-lg p-2 text-sm font-bold text-blue-600"
                   value={formData.SoLuongTon}
                   onChange={(e) => setFormData({ ...formData, SoLuongTon: e.target.value })}
                 />

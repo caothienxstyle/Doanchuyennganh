@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo } from "react";
 import axios from "axios";
-import { 
-  Plus, Trash2, ShieldAlert, FileText, Package, Save, Timer, FileInput, FileOutput,
+import {
+  Plus, Trash2, ShieldAlert, FileText, Package, Save, Timer, FileInput, FileOutput, ArrowRight,
   CheckCircle, Loader2, Info, Users, Clock, Archive, Edit3, Search, Eye, FilePlus, ShieldCheck,
   AlertTriangle, Warehouse, MapPin, Hash, ClipboardList, RefreshCcw, Calendar, History, FilePlus2
 } from "lucide-react";
@@ -21,6 +21,8 @@ export default function PhieubaohanhPage() {
   const [loadingHistory, setLoadingHistory] = useState(true);
   const [searchTermHistory, setSearchTermHistory] = useState("");
   const [activeKpiFilter, setActiveKpiFilter] = useState("");
+  const [startDateFilter, setStartDateFilter] = useState(""); // State mới cho lọc từ ngày
+  const [endDateFilter, setEndDateFilter] = useState("");     // State mới cho lọc đến ngày
   const [activeHistoryTab, setActiveHistoryTab] = useState("EXPORT"); // "EXPORT" | "IMPORT"
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
 
@@ -28,7 +30,7 @@ export default function PhieubaohanhPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [pageInput, setPageInput] = useState("1");
-  
+
   // --- STATE XEM CHI TIẾT ---
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
   const [selectedSlipDetail, setSelectedSlipDetail] = useState(null);
@@ -36,27 +38,28 @@ export default function PhieubaohanhPage() {
   const [loadingDetail, setLoadingDetail] = useState(false);
 
   // --- STATE QUẢN LÝ PHIẾU TỔNG ---
-  const [loaiPhieuBH, setLoaiPhieuBH] = useState("KHACH_HANG"); 
+  const [loaiPhieuBH, setLoaiPhieuBH] = useState("KHACH_HANG");
   const [maDoiTac, setMaDoiTac] = useState("");
   const [soHopDong, setSoHopDong] = useState("");
   const [ghiChuTongQuat, setGhiChuTongQuat] = useState("");
   const [ngayTaoPhieu, setNgayTaoPhieu] = useState(new Date().toISOString().split("T")[0]);
-  
+
   const [loaiChungTuGoc, setLoaiChungTuGoc] = useState("EXPORT"); // "EXPORT" | "IMPORT"
   const [maChungTuGoc, setMaChungTuGoc] = useState("");
+  const [ticketSearchTerm, setTicketSearchTerm] = useState("");
 
   // Mới: Quản lý thời hạn bảo hành
   const [warrantyValue, setWarrantyValue] = useState(12); // Số lượng
   const [warrantyUnit, setWarrantyUnit] = useState("MONTH"); // "MONTH" | "YEAR"
-  
+
   // --- MASTER DATA ---
   const [danhSachKH, setDanhSachKH] = useState([]);
   const [danhSachNCC, setDanhSachNCC] = useState([]);
   const [danhSachKho, setDanhSachKho] = useState([]);
   const [danhSachSP, setDanhSachSP] = useState([]);
   const [danhSachViTri, setDanhSachViTri] = useState([]);
-  const [danhSachPX, setDanhSachPX] = useState([]); 
-  const [danhSachPN, setDanhSachPN] = useState([]); 
+  const [danhSachPX, setDanhSachPX] = useState([]);
+  const [danhSachPN, setDanhSachPN] = useState([]);
   const [loadingPage, setLoadingPage] = useState(true);
   const [modalLoading, setModalLoading] = useState(false);
   const [itemsFromTicket, setItemsFromTicket] = useState([]);
@@ -92,7 +95,8 @@ export default function PhieubaohanhPage() {
   const fetchHistory = async () => {
     try {
       setLoadingHistory(true);
-      const res = await axios.get("http://localhost:3000/phieubaohanh/danhsach", { headers });
+      // 🌟 FIX: Thêm tham số soLuong lớn để lấy toàn bộ dữ liệu phục vụ phân trang tại Frontend
+      const res = await axios.get("http://localhost:3000/phieubaohanh/danhsach?soLuong=5000", { headers });
       if (res.data.success) {
         setHistoryList(res.data.data || []);
       }
@@ -111,7 +115,7 @@ export default function PhieubaohanhPage() {
   // 🔄 Tự động reset trang khi tìm kiếm hoặc lọc
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTermHistory, activeKpiFilter, activeHistoryTab, itemsPerPage]);
+  }, [searchTermHistory, activeKpiFilter, activeHistoryTab, startDateFilter, endDateFilter, itemsPerPage]);
 
   // Đồng bộ ô nhập trang nhanh
   useEffect(() => {
@@ -128,18 +132,30 @@ export default function PhieubaohanhPage() {
   }, [location]);
 
   // Hàm tính toán ngày hết hạn
-  const calculateExpiry = (baseDate) => {
-    if (!baseDate) return "";
-    const d = new Date(baseDate);
-    if (warrantyUnit === "MONTH") d.setMonth(d.getMonth() + parseInt(warrantyValue));
-    else d.setFullYear(d.getFullYear() + parseInt(warrantyValue));
-    return d.toISOString().split("T")[0];
+  const calculateExpiry = (baseDateString) => {
+    if (!baseDateString) return ""; // If no base date, no expiry
+
+    const d = new Date(baseDateString);
+    if (isNaN(d.getTime())) return ""; // If baseDateString is invalid, return empty
+
+    const value = parseInt(warrantyValue);
+    if (isNaN(value) || value < 0) return ""; // If warrantyValue is invalid or negative, return empty
+
+    if (warrantyUnit === "MONTH") {
+      d.setMonth(d.getMonth() + value);
+    } else {
+      d.setFullYear(d.getFullYear() + value);
+    }
+    return d.toISOString().split("T")[0]; // Return formatted date string
   };
 
   // Hàm tính toán thời gian còn lại (Display text)
   const getRemainingTime = (expiryDate) => {
-    if (!expiryDate) return "—";
-    const diff = new Date(expiryDate) - new Date();
+    if (!expiryDate || expiryDate === "N/A" || expiryDate === "—") return "—";
+    const d = new Date(expiryDate);
+    if (isNaN(d.getTime())) return "—";
+
+    const diff = d - new Date();
     if (diff < 0) return "Đã hết hạn";
     const days = Math.floor(diff / (1000 * 60 * 60 * 24));
     const months = Math.floor(days / 30);
@@ -196,7 +212,9 @@ export default function PhieubaohanhPage() {
           return {
             ...item,
             MaSanPham: targetId, // Đảm bảo luôn có key MaSanPham để phục vụ việc lập hồ sơ lẻ
-            TenSanPham: productInfo?.TenSanPham || productInfo?.name || item.TenSanPham || (item.MaSP ? `Sản phẩm mã ${item.MaSP}` : `Sản phẩm #${targetId}`)
+            TenSanPham: productInfo?.TenSanPham || productInfo?.name || item.TenSanPham || (item.MaSP ? `Sản phẩm mã ${item.MaSP}` : `Sản phẩm #${targetId}`),
+            barcode: productInfo?.barcode || productInfo?.Barcode || item.barcode || item.Barcode || "—",
+            QRCode: productInfo?.qrCode || productInfo?.QRCode || item.qrCode || item.QRCode || "—"
           };
         });
         setItemsFromTicket(enrichedItems);
@@ -208,6 +226,31 @@ export default function PhieubaohanhPage() {
     };
     loadTicketDetail();
   }, [maChungTuGoc, loaiChungTuGoc, danhSachSP, danhSachPX, danhSachPN]);
+
+  const currentExpiryPreview = useMemo(() => {
+    const t = (loaiChungTuGoc === "EXPORT" ? danhSachPX : danhSachPN).find(ticket => String(ticket.MaPhieu) === String(maChungTuGoc));
+    const baseDate = (loaiChungTuGoc === "EXPORT" ? t?.NgayXuat : t?.NgayNhap) || ngayTaoPhieu;
+    return calculateExpiry(baseDate);
+  }, [loaiChungTuGoc, danhSachPX, danhSachPN, maChungTuGoc, ngayTaoPhieu, warrantyValue, warrantyUnit]);
+
+  // 🔍 Logic lọc danh sách phiếu xuất/nhập khi đang chọn để lập hồ sơ
+  const filteredTicketsForSelect = useMemo(() => {
+    const list = loaiChungTuGoc === "EXPORT" ? danhSachPX : danhSachPN;
+    const search = ticketSearchTerm.toLowerCase().trim();
+    if (!search) return list;
+
+    return list.filter(t => {
+      const maPhieu = String(t.MaPhieu || "").toLowerCase();
+      let partnerName = "";
+      if (loaiChungTuGoc === "EXPORT") {
+        partnerName = (t.TenKH || danhSachKH.find(k => String(k.MaKH) === String(t.MaKH))?.TenKH || `KH #${t.MaKH}`).toLowerCase();
+      } else {
+        partnerName = (t.TenNCC || danhSachNCC.find(n => String(n.MaNCC) === String(t.MaNCC))?.TenNCC || `NCC #${t.MaNCC}`).toLowerCase();
+      }
+
+      return maPhieu.includes(search) || partnerName.includes(search);
+    });
+  }, [loaiChungTuGoc, danhSachPX, danhSachPN, ticketSearchTerm, danhSachKH, danhSachNCC]);
 
   // Hàm mở xem chi tiết phiếu đã tạo - SIÊU THÔNG MINH & ĐỐI SOÁT SONG HÀNH
   const handleOpenDetail = async (slip) => {
@@ -222,19 +265,19 @@ export default function PhieubaohanhPage() {
     try {
        console.log("🔍 Đang mở chi tiết hồ sơ:", slip);
        let warrantyItems = [];
-       
+
        // 1. Xác định Mã chứng từ gốc - QUÉT TỰ ĐỘNG GIÁ TRỊ (Khử "Lẻ")
        const findDocCode = (obj) => {
          const candidates = [
-           obj.MaPhieuXuatHienThi, obj.MaPhieuNhapHienThi, 
+           obj.MaPhieuXuatHienThi, obj.MaPhieuNhapHienThi,
            obj.MaPhieuGoc, obj.maPhieuGoc,
            obj.MaPX, obj.maPX, obj.MaPN, obj.maPN,
            obj.MaPhieuXuat, obj.maPhieuXuat, obj.MaPhieuNhap, obj.maPhieuNhap,
            obj.MaPhieu, obj.maPhieu
          ];
-         const found = candidates.find(c => 
-           typeof c === 'string' && 
-           c !== "Lẻ" && 
+         const found = candidates.find(c =>
+           typeof c === 'string' &&
+           c !== "Lẻ" &&
            (c.toUpperCase().startsWith('PX') || c.toUpperCase().startsWith('PN'))
          );
          return found || (obj.LoaiPhieuBH === "NHA_CUNG_CAP" ? `Gửi NCC (#${obj.MaPhieuBH || obj.id})` : `Phiếu BH (#${obj.MaPhieuBH || obj.id})`);
@@ -253,12 +296,12 @@ export default function PhieubaohanhPage() {
             // Fallback sang endpoint máy lẻ nếu ID không phải là hồ sơ tổng
             resDetail = await axios.get(`http://localhost:3000/baohanh/chitiet/${slipId}`, { headers });
           }
-          
+
           if (resDetail.data.success) {
              const wData = resDetail.data.data || resDetail.data;
              // Dò tìm mảng hàng hóa linh hoạt
              warrantyItems = wData.ChiTiet || wData.chiTiet || wData.DanhSachBaoHanh || wData.items || (Array.isArray(wData) ? wData : []);
-             
+
              // 🌟 CẢI TIẾN: Nếu maGocActual vẫn undefined, thử lấy từ item đầu tiên của danh sách bảo hành
              if (!maGocActual && warrantyItems.length > 0) {
                 const firstItem = warrantyItems[0];
@@ -289,7 +332,7 @@ export default function PhieubaohanhPage() {
                    // 🌟 FIX LỖI "Invalid number": Chuyển đổi mã "PN..." sang ID số trước khi gọi API chi tiết
                    const pnMatch = danhSachPN.find(p => String(p.MaPhieu) === String(maGocActual));
                    const pnIdActual = pnMatch?.MaPhieuNhap || pnMatch?.id || maGocActual;
-                   
+
                    const res = await axios.get(`http://localhost:3000/phieunhap/chitiet/${pnIdActual}`, { headers });
                    if (res.data && res.data.success) {
                        const oData = res.data.data || res.data;
@@ -310,11 +353,11 @@ export default function PhieubaohanhPage() {
            const productInfo = danhSachSP.find(sp => String(sp.id || sp.MaSanPham || sp.MaSP) === String(currentMaSP));
 
            // Tìm thông tin đối soát từ phiếu gốc (để lấy Serial/Lô nếu bên Bảo hành bị thiếu)
-           const matchingOriginalItem = originalTicketItems.find(oItem => 
+           const matchingOriginalItem = originalTicketItems.find(oItem =>
                String(oItem.MaSanPham || oItem.MaSP || oItem.masanpham) === String(currentMaSP) &&
                (
-                 (item.SoSerial && String(oItem.SoSerial || oItem.serial || "").trim() === String(item.SoSerial).trim()) || 
-                 (item.SoLo && String(oItem.SoLo || oItem.lot || "").trim() === String(item.SoLo).trim()) || 
+                 (item.SoSerial && String(oItem.SoSerial || oItem.serial || "").trim() === String(item.SoSerial).trim()) ||
+                 (item.SoLo && String(oItem.SoLo || oItem.lot || "").trim() === String(item.SoLo).trim()) ||
                  (!item.SoSerial && !item.SoLo)
                )
            );
@@ -322,7 +365,8 @@ export default function PhieubaohanhPage() {
            return {
                ...item,
                TenSanPham: productInfo?.TenSanPham || productInfo?.name || item.TenSanPham || matchingOriginalItem?.TenSanPham || `Sản phẩm #${currentMaSP}`,
-               QRCode: productInfo?.qrCode || productInfo?.QRCode || productInfo?.barcode || item.QRCode || matchingOriginalItem?.QRCode || "—",
+               barcode: productInfo?.barcode || productInfo?.Barcode || item.barcode || item.Barcode || matchingOriginalItem?.barcode || matchingOriginalItem?.Barcode || "—",
+               QRCode: productInfo?.qrCode || productInfo?.QRCode || item.qrCode || item.QRCode || matchingOriginalItem?.qrCode || matchingOriginalItem?.QRCode || "—",
                SoLuong: item.SoLuong || item.soLuong || item.SoSanPham || item.Quantity || matchingOriginalItem?.SoLuong || 0,
                SoSerial: item.SoSerial || item.serial || matchingOriginalItem?.SoSerial || "—",
                SoLo: item.SoLo || item.lot || matchingOriginalItem?.SoLo || "—",
@@ -344,6 +388,21 @@ export default function PhieubaohanhPage() {
   // ==========================================
   const handleFinalSubmit = async () => {
     if (!maChungTuGoc) return alert("Vui lòng chọn chứng từ gốc (Phiếu nhập/xuất)!");
+
+    // 🛡️ BƯỚC 0: KIỂM TRA TRẠNG THÁI PHÊ DUYỆT CỦA CHỨNG TỪ GỐC
+    const ticketList = loaiChungTuGoc === "EXPORT" ? danhSachPX : danhSachPN;
+    const selectedTicket = ticketList.find(t => String(t.MaPhieu) === String(maChungTuGoc));
+
+    if (!selectedTicket || (selectedTicket.TrangThai !== "DaDuyet" && selectedTicket.TrangThai !== "Đã duyệt")) {
+      return alert("Chỉ có thể kích hoạt bảo hành cho các phiếu đã được phê duyệt!");
+    }
+    // -----------------------------------------------------------
+
+    // 🛡️ CHẶN KÍCH HOẠT TRÙNG LẶP TỪ TẦNG LOGIC
+    if (activatedDocCodes.has(String(maChungTuGoc))) {
+      return alert(`Lỗi logic: Chứng từ ${maChungTuGoc} đã được kích hoạt bảo hành trước đó. Hệ thống không cho phép tạo trùng hồ sơ!`);
+    }
+
     if (!maDoiTac) return alert("Vui lòng chọn Đối tác (Khách hàng/NCC)!");
 
     try {
@@ -352,7 +411,7 @@ export default function PhieubaohanhPage() {
       // BƯỚC 1: Tự động tạo các bản ghi Bảo hành cho toàn bộ item trong phiếu
       const ticketList = loaiChungTuGoc === "EXPORT" ? danhSachPX : danhSachPN;
       const ticketHeader = ticketList.find(t => String(t.MaPhieu || t.MaPhieuXuat) === String(maChungTuGoc));
-      const baseDate = loaiChungTuGoc === "EXPORT" ? ticketHeader?.NgayXuat : ticketHeader?.NgayNhap;
+      const baseDate = (loaiChungTuGoc === "EXPORT" ? ticketHeader?.NgayXuat : ticketHeader?.NgayNhap) || ngayTaoPhieu;
       const calculatedExpiryDate = calculateExpiry(baseDate);
 
       // 🌟 Cập nhật theo yêu cầu BE: Phân tách rõ ID Xuất và ID Nhập
@@ -373,7 +432,7 @@ export default function PhieubaohanhPage() {
           LoaiBaoHanh: "Sửa chữa",
           HanBaoHanh: calculatedExpiryDate,
           TrangThai: "ChoBaoHanh",
-          SoLuong: qty, // 🌟 TRUYỀN SỐ LƯỢNG THỰC TẾ CỦA DÒNG HÀNG
+          SoLuong: qty, 
           DanhSachSerial: item.SoSerial ? [item.SoSerial] : []
         }, { headers });
       });
@@ -389,11 +448,12 @@ export default function PhieubaohanhPage() {
         GhiChuTongQuat: ghiChuTongQuat,
         NgayTaoPhieu: ngayTaoPhieu,
         DanhSachMaBaoHanh: allWarrantyIds,
-        MaPhieuGoc: maChungTuGoc // Gửi kèm mã chứng từ gốc để Backend lưu vết song song
+        MaPhieuGoc: maChungTuGoc, // Gửi kèm mã chứng từ gốc để Backend lưu vết song song
+        HanBaoHanh: calculatedExpiryDate // Thêm ngày hết hạn vào phiếu tổng
       };
 
       const res = await axios.post("http://localhost:3000/phieubaohanh/taomoi", payload, { headers });
-      
+
       if (res.data.success) {
         alert("✨ Lập phiếu bảo hành thành công! Mã phiếu: " + (res.data.MaPhieu || "OK"));
         setMaDoiTac("");
@@ -413,81 +473,154 @@ export default function PhieubaohanhPage() {
 
   // --- CẤU HÌNH CỘT LỊCH SỬ ---
   const historyColumns = [
-    { 
-      key: "MaPhieuBH", 
-      label: "Mã Phiếu BH", 
-      render: (v, row) => <span className="font-mono font-bold text-blue-600">#{v || row.MaPhieu || row.id}</span> 
+    {
+      key: "MaPhieuBH",
+      label: "Mã Phiếu BH",
+      render: (v, row) => <span className="font-mono font-bold text-blue-600">#{v || row.MaPhieu || row.id}</span>
     },
-    { 
-      key: "LoaiPhieuBH", 
-      label: "Loại Hình", 
+    {
+      key: "LoaiPhieuBH",
+      label: "Loại Hình",
       render: (v) => (
         <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold border ${
-          v === "KHACH_HANG" ? "bg-blue-50 text-blue-600 border-blue-100" : "bg-purple-50 text-purple-600 border-purple-100"
+          v === "KHACH_HANG" ? "bg-blue-50 text-blue-600 border-blue-100" : "bg-purple-50 text-purple-600 border-purple-100 whitespace-nowrap"
         }`}>
           {v === "KHACH_HANG" ? "KHÁCH HÀNG" : "NHÀ CUNG CẤP"}
         </span>
       )
     },
-    { 
-      key: "MaPXPN", 
-      label: "Mã phiếu", 
+    {
+      key: "MaPXPN",
+      label: "Mã phiếu",
       render: (_, row) => {
-        const isExport = row.LoaiPhieuBH === "KHACH_HANG";
-        const isImport = row.LoaiPhieuBH === "NHA_CUNG_CAP";
-        
-        // Ưu tiên hiển thị từ các trường HienThi mới
-        let maGocDetected = row.MaPhieuXuatHienThi || row.MaPhieuNhapHienThi;
-        if (!maGocDetected) {
-          const values = Object.values(row || {});
-          maGocDetected = values.find(v => typeof v === 'string' && (v.trim().toUpperCase().startsWith('PX') || v.trim().toUpperCase().startsWith('PN')));
-        }
-        const maGoc = maGocDetected || (row.MaPhieuGoc !== "Lẻ" ? row.MaPhieuGoc : "N/A"); // Fallback to MaPhieuGoc
-        const prefix = maGocDetected?.toUpperCase().startsWith('PX') ? "Xuất:" : (maGocDetected?.toUpperCase().startsWith('PN') ? "Nhập:" : "Gốc:");
-        const colorClass = isExport 
-          ? "text-orange-600 bg-orange-50 border-orange-100" 
-          : isImport 
-            ? "text-blue-600 bg-blue-50 border-blue-100" 
+        const maGoc = row.MaPXPN_Detected || "N/A";
+        const isExportDoc = String(maGoc).toUpperCase().startsWith('PX');
+        const isImportDoc = String(maGoc).toUpperCase().startsWith('PN');
+        const prefix = isExportDoc ? "Xuất:" : (isImportDoc ? "Nhập:" : "Gốc:");
+
+        const colorClass = row.LoaiPhieuBH === "KHACH_HANG"
+          ? "text-orange-600 bg-orange-50 border-orange-100"
+          : row.LoaiPhieuBH === "NHA_CUNG_CAP"
+            ? "text-blue-600 bg-blue-50 border-blue-100"
             : "text-indigo-600 bg-indigo-50 border-indigo-100";
-        return <span className={`text-[10px] font-bold ${colorClass} px-2 py-0.5 rounded border`}>{prefix} {maGoc}</span>;
+        return <span className={`whitespace-nowrap text-[10px] font-bold ${colorClass} px-2 py-0.5 rounded border`}>{prefix} {maGoc}</span>;
       }
     },
-    { 
-      key: "TenDoiTac", 
-      label: "Đối Tác", 
+    {
+      key: "TenDoiTac",
+      label: "Đối Tác",
       render: (v, row) => {
-        const partner = row.LoaiPhieuBH === "KHACH_HANG" 
+        const partner = row.LoaiPhieuBH === "KHACH_HANG"
           ? danhSachKH.find(k => String(k.MaKH) === String(row.MaDoiTac))
           : danhSachNCC.find(n => String(n.MaNCC) === String(row.MaDoiTac));
         return <span className="font-semibold text-gray-700">{partner?.TenKH || partner?.TenNCC || v || row.MaDoiTac}</span>;
       }
     },
-    { 
-      key: "NgayTaoPhieu", 
-      label: "Ngày Lập", 
-      render: (v) => <span className="text-gray-500">{new Date(v).toLocaleDateString("vi-VN")}</span> 
+    {
+      key: "NgayTaoPhieu",
+      label: "Ngày Lập",
+      render: (v) => <span className="text-gray-500">{new Date(v).toLocaleDateString("vi-VN")}</span>
     },
-    { 
-      key: "Status", 
-      label: "Tình trạng BH", 
+{
+  key: "HanBaoHanh",
+  label: "Ngày hết hạn BH",
+      render: (v) => {
+        const rawDate = v; // v đã là HanBaoHanh từ historyNormalized
+    if (!rawDate || rawDate === "N/A" || rawDate === "—") {
+      return (
+        <span className="text-gray-300 italic text-[11px]">
+          Chưa xác định
+        </span>
+      );
+    }
+
+    const d = new Date(rawDate);
+
+    if (isNaN(d.getTime())) {
+      return (
+        <span className="text-gray-300 italic text-[11px]">
+          Chưa xác định
+        </span>
+      );
+    }
+
+    const now = new Date();
+    const isExpired = d < now;
+    const isExpiringSoon =
+      !isExpired &&
+      d - now < 30 * 24 * 60 * 60 * 1000;
+
+    return (
+      <span
+        className={`font-bold text-sm ${
+          isExpired
+            ? "text-red-500"
+            : isExpiringSoon
+            ? "text-orange-500"
+            : "text-gray-700"
+        }`}
+      >
+        {d.toLocaleDateString("vi-VN")}
+      </span>
+    );
+  },
+},
+{
+  key: "ThoiHanConLai",
+  label: "Thời hạn còn lại",
       render: (_, row) => {
-        // Tính toán thông minh dựa trên ngày lập + hạn bảo hành trung bình của phiếu
-        // Ở đây ta lấy ví dụ dựa trên dữ liệu hiển thị
+        const hanBH = row.HanBaoHanh; // Lấy giá trị HanBaoHanh từ đối tượng row
+        if (!hanBH || hanBH === "N/A" || hanBH === "—") {
+          return <span className="text-gray-300">—</span>;
+        }
+
+        const d = new Date(hanBH);
+
+        if (isNaN(d.getTime())) {
+          return <span className="text-gray-300">—</span>;
+        }
+
+        const isExpired = d < new Date();
+
+        return (
+          <span
+            className={`font-medium text-xs ${isExpired ? "text-red-400" : "text-blue-600"}`}
+          >
+            {getRemainingTime(hanBH)} {/* Truyền hanBH vào hàm getRemainingTime */}
+          </span>
+        );
+      },
+},
+    {
+      key: "Status",
+      label: "Tình trạng",
+      render: (_, row) => {
+        const hanBH = row.HanBaoHanh ? new Date(row.HanBaoHanh) : null;
+        const now = new Date();
+        const isExpired = hanBH && hanBH < now;
+        const isExpiringSoon = hanBH && !isExpired && (hanBH - now) < 30 * 24 * 60 * 60 * 1000;
+
         return (
           <div className="flex flex-col">
-            <span className="text-[10px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded-full w-fit">ĐANG HIỆU LỰC</span>
+            {isExpired ? (
+              <span className="text-[10px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded-full w-fit">HẾT HẠN</span>
+            ) : isExpiringSoon ? (
+              <span className="text-[10px] font-bold text-orange-600 bg-orange-50 px-2 py-0.5 rounded-full w-fit">SẮP HẾT HẠN</span>
+            ) : (
+              <span className="text-[10px] font-bold text-green-600 bg-green-50 px-2 py-0.5 rounded-full w-fit whitespace-nowrap">ĐANG HIỆU LỰC</span>
+            )}
           </div>
         );
       }
     },
-    { 
-      key: "SoLuong", 
-      label: "Số lượng", 
+    {
+      key: "SoLuong",
+      label: "Số lượng",
       render: (v, row) => {
-        // Đồng bộ logic lấy số lượng giống phiếu Nhập/Xuất: 
+        // Đồng bộ logic lấy số lượng giống phiếu Nhập/Xuất:
         // Ưu tiên các trường tổng hợp từ Backend, nếu không có mới fallback về đếm mảng ID
         const count = row.SoLuong || row.soLuong || row.SoSanPham || row.TongSoLuong || v || (Array.isArray(row.DanhSachMaBaoHanh) ? row.DanhSachMaBaoHanh.length : 0);
-        return <span className="font-bold text-gray-700">{count} máy</span>;
+        return <span className="font-bold text-gray-700">{count}</span>;
       }
     },
     {
@@ -501,34 +634,31 @@ export default function PhieubaohanhPage() {
     }
   ];
 
+  // 🌟 MỚI: Chuẩn hóa dữ liệu toàn cục để dùng cho cả Thẻ KPI và Bảng dữ liệu
+  const historyNormalized = useMemo(() => {
+    return historyList.map(item => {
+      const candidates = [
+        item.MaPhieuXuatHienThi, item.MaPhieuNhapHienThi, item.MaPhieuGoc, item.maPhieuGoc,
+        item.MaPX, item.maPX, item.MaPN, item.maPN, item.MaPhieuXuat, item.maPhieuXuat,
+        item.MaPhieuNhap, item.maPhieuNhap, item.MaPhieu, item.maPhieu
+      ];
+      const maGocDetected = candidates.find(c => typeof c === 'string' && c !== "Lẻ" && (c.toUpperCase().startsWith('PX') || c.toUpperCase().startsWith('PN')));
+
+      // 🛡️ CHUẨN HÓA QUAN TRỌNG: Gom tất cả các key ngày hết hạn về một mối
+      let finalHanBH = item.HanBaoHanh || item.hanBaoHanh || item.HanBH || item.HanBaoHanh_KhachHang || item.HanBaoHanh_NCC;
+
+      return {
+        ...item,
+        MaPXPN_Detected: maGocDetected || (item.MaPhieuGoc !== "Lẻ" ? item.MaPhieuGoc : "Hồ sơ lẻ"),
+        HanBaoHanh: finalHanBH
+      };
+    });
+  }, [historyList]);
+
   const filteredHistory = useMemo(() => {
     const now = new Date();
 
-    // 🌟 Chuẩn hóa dữ liệu (Bóc tách mã phiếu) trước khi lọc để đồng bộ tìm kiếm
-    const mapped = historyList.map(item => {
-      const candidates = [
-        item.MaPhieuXuatHienThi, 
-        item.MaPhieuNhapHienThi, 
-        item.MaPhieuGoc, 
-        item.maPhieuGoc,
-        item.MaPX, 
-        item.maPX,
-        item.MaPN, 
-        item.maPN,
-        item.MaPhieuXuat, 
-        item.maPhieuXuat,
-        item.MaPhieuNhap, 
-        item.maPhieuNhap,
-        item.MaPhieu,
-        item.maPhieu
-      ];
-      const maGocDetected = candidates.find(c => typeof c === 'string' && (c.toUpperCase().startsWith('PX') || c.toUpperCase().startsWith('PN')));
-      
-      // Nếu tìm thấy mã PX/PN thì hiện mã đó, nếu không thì mới hiện MaPhieuGoc gốc từ BE hoặc N/A
-      return { ...item, MaPXPN_Detected: maGocDetected || item.MaPhieuGoc || "N/A" };
-    });
-
-    return mapped.filter(item => {
+    return historyNormalized.filter(item => {
       const isExport = item.LoaiPhieuBH === "KHACH_HANG";
       const isImport = item.LoaiPhieuBH === "NHA_CUNG_CAP";
       const matchesTab = activeHistoryTab === "EXPORT" ? isExport : isImport;
@@ -539,7 +669,7 @@ export default function PhieubaohanhPage() {
         String(item.MaPhieu || "").toLowerCase().includes(searchLower) ||
         String(item.MaPhieuXuatHienThi || "").toLowerCase().includes(searchLower) ||
         String(item.MaPhieuNhapHienThi || "").toLowerCase().includes(searchLower) ||
-        String(item.MaPXPN_Detected || "").toLowerCase().includes(searchLower) || 
+        String(item.MaPXPN_Detected || "").toLowerCase().includes(searchLower) ||
         String(item.MaPhieuGoc || "").toLowerCase().includes(searchLower) ||
         String(item.MaPX || "").toLowerCase().includes(searchLower) ||
         String(item.MaPN || "").toLowerCase().includes(searchLower) ||
@@ -547,33 +677,71 @@ export default function PhieubaohanhPage() {
         String(item.MaPhieuNhap || "").toLowerCase().includes(searchLower) ||
         String(item.TenDoiTac || "").toLowerCase().includes(searchTermHistory.toLowerCase());
 
+      // Lọc theo khoảng ngày
+      const ngayLap = item.NgayTaoPhieu ? new Date(item.NgayTaoPhieu).toISOString().split('T')[0] : "";
+      const matchesStartDate = !startDateFilter || (ngayLap >= startDateFilter);
+      const matchesEndDate = !endDateFilter || (ngayLap <= endDateFilter);
+
       // Tính toán ngày hết hạn để lọc KPI
       const hanBH = item.HanBaoHanh ? new Date(item.HanBaoHanh) : null;
-      const matchesKpi = activeKpiFilter === "" || 
+      const matchesKpi = activeKpiFilter === "" ||
         (activeKpiFilter === "ACTIVE" && (!hanBH || hanBH >= now)) ||
         (activeKpiFilter === "EXPIRING" && hanBH && (hanBH - now) > 0 && (hanBH - now) < 30 * 24 * 60 * 60 * 1000) ||
+        (activeKpiFilter === "ALL_MACHINES") ||
         (activeKpiFilter === "DANGER" && hanBH && hanBH < now);
 
-      return matchesSearch && matchesKpi && matchesTab;
+      // 🌟 TỐI ƯU: Nếu đang bật lọc KPI (như Đang hiệu lực, Hết hạn...), ta cho phép xem xuyên Tab
+      // để khớp với con số hiển thị trên Card KPI (vì Card KPI tính tổng toàn cục)
+      const isKpiActive = activeKpiFilter !== "" && activeKpiFilter !== "ALL_MACHINES";
+      const finalMatchesTab = (activeKpiFilter === "ALL_MACHINES" || isKpiActive) ? true : matchesTab;
+
+      return matchesSearch && matchesKpi && finalMatchesTab && matchesStartDate && matchesEndDate;
     });
-  }, [historyList, searchTermHistory, activeKpiFilter, activeHistoryTab]);
+  }, [historyNormalized, searchTermHistory, activeKpiFilter, activeHistoryTab, startDateFilter, endDateFilter]);
+
+  // 🛡️ LOGIC ĐỐI SOÁT: Tập hợp các mã PX/PN đã có hồ sơ bảo hành để ngăn chặn kích hoạt lại
+  const activatedDocCodes = useMemo(() => {
+    return new Set(historyList.map(item => {
+      const candidates = [
+        item.MaPhieuXuatHienThi, item.MaPhieuNhapHienThi,
+        item.MaPhieuGoc, item.maPhieuGoc,
+        item.MaPX, item.maPX, item.MaPN, item.maPN,
+        item.MaPhieuXuat, item.maPhieuXuat, item.MaPhieuNhap, item.maPhieuNhap,
+        item.MaPhieu, item.maPhieu
+      ];
+      const maGoc = candidates.find(c =>
+        typeof c === 'string' && c !== "Lẻ" && (c.toUpperCase().startsWith('PX') || c.toUpperCase().startsWith('PN'))
+      );
+      return maGoc || item.MaPhieuGoc;
+    }).filter(id => id && id !== "Lẻ"));
+  }, [historyList]);
 
   // 🔢 TOÁN TỬ PHÂN TRANG
   const totalItems = filteredHistory.length;
   const totalPages = Math.ceil(totalItems / itemsPerPage) || 1;
-  const indexOfLastItem = currentPage * itemsPerPage;
+  const activePage = Math.min(currentPage, totalPages);
+  const indexOfLastItem = activePage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
-  const paginatedHistory = useMemo(() => {
-    return filteredHistory.slice(indexOfFirstItem, indexOfLastItem);
-  }, [filteredHistory, indexOfFirstItem, indexOfLastItem]);
+  const paginatedHistory = filteredHistory.slice(indexOfFirstItem, indexOfLastItem);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
+  const handleSetPage = (page) => {
+    const targetPage = Math.min(Math.max(page, 1), totalPages);
+    setCurrentPage(targetPage);
+    setPageInput(String(targetPage));
+  };
 
   const handlePageInputBlurOrEnter = (e) => {
     if (e.key && e.key !== "Enter") return;
     let targetPage = parseInt(pageInput, 10);
     if (isNaN(targetPage) || targetPage < 1) targetPage = 1;
     if (targetPage > totalPages) targetPage = totalPages;
-    setCurrentPage(targetPage);
-    setPageInput(String(targetPage));
+    handleSetPage(targetPage);
   };
 
   // Hàm tiện ích tính tổng máy để tránh lặp code và sai lệch
@@ -590,9 +758,9 @@ export default function PhieubaohanhPage() {
             <h2 className="text-2xl font-bold text-gray-800">Quản lý Hồ sơ Bảo hành</h2>
             <p className="text-sm text-gray-400 mt-1">Tra cứu thời hạn và kích hoạt bảo hành song hành cùng chứng từ kho</p>
           </div>
-          
+
           {activeKpiFilter && (
-            <button 
+            <button
               onClick={() => setActiveKpiFilter("")}
               className="text-[10px] bg-amber-50 text-amber-600 border border-amber-200 px-3 py-1 rounded-full font-bold hover:bg-amber-100 transition-all animate-pulse"
             >
@@ -619,52 +787,55 @@ export default function PhieubaohanhPage() {
         {/* KPI STATS */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
           {/* KPI CARDS: Cập nhật hiển thị số lượng máy (Items) thay vì chỉ đếm số phiếu (Slips) */}
-          <div onClick={() => { setActiveKpiFilter(""); }} className={`cursor-pointer transition-all hover:scale-[1.02] bg-white p-4 rounded-2xl border flex items-center gap-4 shadow-xs ${activeKpiFilter === "" ? "border-blue-500 ring-2 ring-blue-500/10 shadow-sm" : "border-gray-100"}`}>
+          <div
+            onClick={() => setActiveKpiFilter(prev => prev === "ALL_MACHINES" ? "" : "ALL_MACHINES")}
+            className={`cursor-pointer transition-all hover:scale-[1.02] bg-white p-4 rounded-2xl border flex items-center gap-4 shadow-xs ${activeKpiFilter === "ALL_MACHINES" ? "border-blue-500 ring-2 ring-blue-500/10 shadow-sm" : "border-gray-100"}`}
+          >
             <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600"><History size={20}/></div>
             <div>
               <p className="text-[10px] font-bold text-gray-400 uppercase">Tổng số máy BH</p>
-              <h3 className="text-xl font-bold text-gray-800">{calculateTotalMachines(historyList)}</h3>
+              <h3 className="text-xl font-bold text-gray-800">{calculateTotalMachines(historyNormalized)}</h3>
             </div>
           </div>
 
-          <div 
+          <div
             onClick={() => { setActiveHistoryTab("EXPORT"); setActiveKpiFilter(""); }}
-            className={`cursor-pointer transition-all hover:scale-[1.02] bg-white p-4 rounded-2xl border flex items-center gap-4 shadow-xs ${activeHistoryTab === "EXPORT" ? "border-orange-500 ring-2 ring-orange-500/10 shadow-sm" : "border-gray-100"}`}
+            className={`cursor-pointer transition-all hover:scale-[1.02] bg-white p-4 rounded-2xl border flex items-center gap-4 shadow-sm ${activeHistoryTab === "EXPORT" ? "border-orange-500 ring-2 ring-orange-500/10 shadow-sm" : "border-gray-100"}`}
           >
             <div className="w-10 h-10 rounded-xl bg-orange-50 flex items-center justify-center text-orange-600"><FileOutput size={20}/></div>
-            <div><p className="text-[10px] font-bold text-gray-400 uppercase">Máy từ PX</p><h3 className="text-xl font-bold text-orange-600">{calculateTotalMachines(historyList.filter(p => p.LoaiPhieuBH === "KHACH_HANG"))}</h3></div>
+            <div><p className="text-[10px] font-bold text-gray-400 uppercase">Máy từ PX</p><h3 className="text-xl font-bold text-orange-600">{calculateTotalMachines(historyNormalized.filter(p => p.LoaiPhieuBH === "KHACH_HANG"))}</h3></div>
           </div>
 
-          <div 
+          <div
             onClick={() => { setActiveHistoryTab("IMPORT"); setActiveKpiFilter(""); }}
             className={`cursor-pointer transition-all hover:scale-[1.02] bg-white p-4 rounded-2xl border flex items-center gap-4 shadow-xs ${activeHistoryTab === "IMPORT" ? "border-emerald-500 ring-2 ring-emerald-500/10 shadow-sm" : "border-gray-100"}`}
           >
             <div className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600"><FileInput size={20}/></div>
-            <div><p className="text-[10px] font-bold text-gray-400 uppercase">Máy từ PN</p><h3 className="text-xl font-bold text-emerald-600">{calculateTotalMachines(historyList.filter(p => p.LoaiPhieuBH === "NHA_CUNG_CAP"))}</h3></div>
+            <div><p className="text-[10px] font-bold text-gray-400 uppercase">Máy từ PN</p><h3 className="text-xl font-bold text-emerald-600">{calculateTotalMachines(historyNormalized.filter(p => p.LoaiPhieuBH === "NHA_CUNG_CAP"))}</h3></div>
           </div>
 
-          <div 
-            onClick={() => setActiveKpiFilter("ACTIVE")}
-            className={`cursor-pointer transition-all hover:scale-[1.02] bg-white p-4 rounded-2xl border flex items-center gap-4 shadow-xs ${activeKpiFilter === "ACTIVE" ? "border-emerald-500 ring-2 ring-emerald-500/10" : "border-gray-100"}`}
+          <div
+            onClick={() => setActiveKpiFilter(prev => prev === "ACTIVE" ? "" : "ACTIVE")}
+            className={`cursor-pointer transition-all hover:scale-[1.02] bg-white p-4 rounded-2xl border flex items-center gap-4 shadow-xs ${activeKpiFilter === "ACTIVE" ? "border-emerald-500 ring-2 ring-emerald-500/10 shadow-sm" : "border-gray-100"}`}
           >
             <div className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600"><CheckCircle size={20}/></div>
-            <div><p className="text-[10px] font-bold text-gray-400 uppercase">Đang hiệu lực</p><h3 className="text-xl font-bold text-emerald-600">{calculateTotalMachines(historyList.filter(p => !p.HanBaoHanh || new Date(p.HanBaoHanh) >= new Date()))}</h3></div>
+            <div><p className="text-[10px] font-bold text-gray-400 uppercase">Đang hiệu lực</p><h3 className="text-xl font-bold text-emerald-600">{calculateTotalMachines(historyNormalized.filter(p => !p.HanBaoHanh || new Date(p.HanBaoHanh) >= new Date()))}</h3></div>
           </div>
 
-          <div 
+          <div
             onClick={() => setActiveKpiFilter(prev => prev === "EXPIRING" ? "" : "EXPIRING")}
-            className={`cursor-pointer transition-all hover:scale-[1.02] bg-white p-4 rounded-2xl border flex items-center gap-4 shadow-xs ${activeKpiFilter === "EXPIRING" ? "border-amber-500 ring-2 ring-amber-500/10" : "border-gray-100"}`}
+            className={`cursor-pointer transition-all hover:scale-[1.02] bg-white p-4 rounded-2xl border flex items-center gap-4 shadow-xs ${activeKpiFilter === "EXPIRING" ? "border-amber-500 ring-2 ring-amber-500/10 shadow-sm" : "border-gray-100"}`}
           >
             <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center text-amber-600"><Timer size={20}/></div>
-            <div><p className="text-[10px] font-bold text-gray-400 uppercase">Sắp hết hạn</p><h3 className="text-xl font-bold text-amber-600">{calculateTotalMachines(historyList.filter(p => p.HanBaoHanh && (new Date(p.HanBaoHanh) - new Date()) > 0 && (new Date(p.HanBaoHanh) - new Date()) < 30 * 24 * 60 * 60 * 1000))}</h3></div>
+            <div><p className="text-[10px] font-bold text-gray-400 uppercase">Sắp hết hạn</p><h3 className="text-xl font-bold text-amber-600">{calculateTotalMachines(historyNormalized.filter(p => p.HanBaoHanh && (new Date(p.HanBaoHanh) - new Date()) > 0 && (new Date(p.HanBaoHanh) - new Date()) < 30 * 24 * 60 * 60 * 1000))}</h3></div>
           </div>
 
-          <div 
+          <div
             onClick={() => setActiveKpiFilter(prev => prev === "DANGER" ? "" : "DANGER")}
-            className={`cursor-pointer transition-all hover:scale-[1.02] bg-white p-4 rounded-2xl border flex items-center gap-4 shadow-xs ${activeKpiFilter === "DANGER" ? "border-red-500 ring-2 ring-red-500/10" : "border-gray-100"}`}
+            className={`cursor-pointer transition-all hover:scale-[1.02] bg-white p-4 rounded-2xl border flex items-center gap-4 shadow-xs ${activeKpiFilter === "DANGER" ? "border-red-500 ring-2 ring-red-500/10 shadow-sm" : "border-gray-100"}`}
           >
             <div className="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center text-red-600"><ShieldAlert size={20}/></div>
-            <div><p className="text-[10px] font-bold text-gray-400 uppercase">Hết hạn BH</p><h3 className="text-xl font-bold text-red-600">{calculateTotalMachines(historyList.filter(p => p.HanBaoHanh && new Date(p.HanBaoHanh) < new Date()))}</h3></div>
+            <div><p className="text-[10px] font-bold text-gray-400 uppercase">Hết hạn BH</p><h3 className="text-xl font-bold text-red-600">{calculateTotalMachines(historyNormalized.filter(p => p.HanBaoHanh && new Date(p.HanBaoHanh) < new Date()))}</h3></div>
           </div>
         </div>
 
@@ -686,23 +857,47 @@ export default function PhieubaohanhPage() {
 
         {/* BẢNG DỮ LIỆU CHÍNH */}
         <div className="space-y-4 animate-in fade-in duration-500">
-          <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="md:col-span-2 relative">
-              <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Tìm kiếm hồ sơ</label>
+          <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm grid grid-cols-1 md:grid-cols-5 gap-4">
+            <div className="md:col-span-2">
+              <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Tìm kiếm hồ sơ bảo hành</label>
               <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16}/>
-              <input 
-                type="text"
-                placeholder="Tìm mã phiếu (PX/PN), mã hồ sơ hoặc tên đối tác..."
-                className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-medium"
-                value={searchTermHistory}
-                onChange={(e) => setSearchTermHistory(e.target.value)}
-              />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" size={16}/>
+                <input
+                  type="text"
+                  placeholder="Mã phiếu (PX/PN), mã hồ sơ, tên đối tác..."
+                  className="w-full pl-10 pr-4 py-2 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 transition-all font-medium"
+                  value={searchTermHistory}
+                  onChange={(e) => setSearchTermHistory(e.target.value)}
+                />
+                {searchTermHistory && (
+                  <button type="button" onClick={() => setSearchTermHistory("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-sm font-bold">×</button>
+                )}
               </div>
             </div>
+
+            <div>
+              <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Từ ngày</label>
+              <input
+                type="date"
+                className="w-full px-3 py-2 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:outline-none"
+                value={startDateFilter}
+                onChange={(e) => setStartDateFilter(e.target.value)}
+              />
+            </div>
+
+            <div>
+              <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Đến ngày</label>
+              <input
+                type="date"
+                className="w-full px-3 py-2 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:outline-none"
+                value={endDateFilter}
+                onChange={(e) => setEndDateFilter(e.target.value)}
+              />
+            </div>
+
             <div>
               <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1">Hiển thị</label>
-              <select 
+              <select
                 className="w-full px-3 py-2 bg-gray-50 border border-gray-100 rounded-xl text-sm focus:outline-none"
                 value={itemsPerPage}
                 onChange={(e) => setItemsPerPage(Number(e.target.value))}
@@ -712,18 +907,14 @@ export default function PhieubaohanhPage() {
                 <option value={50}>50 dòng / trang</option>
               </select>
             </div>
-            <div className="flex items-center gap-2 text-xs font-bold text-gray-400 uppercase">
-               <Clock size={14}/> Danh sách hồ sơ bảo hành toàn kho
-            </div>
           </div>
-
           <div className="bg-white rounded-2xl border border-gray-200 shadow-sm overflow-hidden min-h-[400px]">
             {loadingHistory ? (
               <div className="flex items-center justify-center p-24 text-gray-400 gap-2"><Loader2 className="animate-spin" size={24}/> Đang nạp danh sách hồ sơ...</div>
             ) : (
-              <DataTable 
-                columns={historyColumns} 
-                data={paginatedHistory} 
+              <DataTable
+                columns={historyColumns}
+                data={paginatedHistory}
               />
             )}
           </div>
@@ -739,24 +930,24 @@ export default function PhieubaohanhPage() {
             </div>
 
             <div className="flex items-center space-x-2">
-              <button disabled={currentPage === 1} onClick={() => setCurrentPage(1)} className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white disabled:opacity-40 hover:bg-gray-50 transition-all font-medium text-xs">« Đầu</button>
-              <button disabled={currentPage === 1} onClick={() => setCurrentPage(p => p - 1)} className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white disabled:opacity-40 hover:bg-gray-50 transition-all font-medium text-xs">‹ Trước</button>
-              
+              <button disabled={activePage === 1} onClick={() => setCurrentPage(1)} className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white disabled:opacity-40 hover:bg-gray-50 transition-all font-medium text-xs">« Đầu</button>
+              <button disabled={activePage === 1} onClick={() => setCurrentPage(p => Math.max(1, p - 1))} className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white disabled:opacity-40 hover:bg-gray-50 transition-all font-medium text-xs">‹ Trước</button>
+
               <div className="flex items-center space-x-1.5 px-3 py-1 border border-gray-200 rounded-lg bg-gray-50/50">
                 <span className="text-[10px] font-bold text-gray-400 uppercase">Trang</span>
-                <input 
-                  type="number" 
-                  className="w-10 text-center bg-transparent font-bold text-blue-600 focus:outline-none text-xs" 
-                  value={pageInput} 
-                  onChange={(e) => setPageInput(e.target.value)} 
-                  onBlur={handlePageInputBlurOrEnter} 
-                  onKeyDown={handlePageInputBlurOrEnter} 
+                <input
+                  type="number"
+                  className="w-10 text-center bg-transparent font-bold text-blue-600 focus:outline-none text-xs"
+                  value={pageInput}
+                  onChange={(e) => setPageInput(e.target.value)}
+                  onBlur={handlePageInputBlurOrEnter}
+                  onKeyDown={handlePageInputBlurOrEnter}
                 />
                 <span className="text-[10px] font-bold text-gray-400 uppercase">/ {totalPages}</span>
               </div>
 
-              <button disabled={currentPage === totalPages} onClick={() => setCurrentPage(p => p + 1)} className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white disabled:opacity-40 hover:bg-gray-50 transition-all font-medium text-xs">Sau ›</button>
-              <button disabled={currentPage === totalPages} onClick={() => setCurrentPage(totalPages)} className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white disabled:opacity-40 hover:bg-gray-50 transition-all font-medium text-xs">Cuối »</button>
+              <button disabled={activePage === totalPages} onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))} className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white disabled:opacity-40 hover:bg-gray-50 transition-all font-medium text-xs">Sau ›</button>
+              <button disabled={activePage === totalPages} onClick={() => setCurrentPage(totalPages)} className="px-3 py-1.5 rounded-lg border border-gray-200 bg-white disabled:opacity-40 hover:bg-gray-50 transition-all font-medium text-xs">Cuối »</button>
             </div>
           </div>
         )}
@@ -781,31 +972,86 @@ export default function PhieubaohanhPage() {
                   <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 space-y-5">
                     <h4 className="text-[11px] font-black text-blue-600 uppercase tracking-widest border-b pb-2">Bước 1: Nguồn chứng từ</h4>
                     <div className="flex gap-2 p-1 bg-gray-100 rounded-xl">
-                      <button onClick={() => {setLoaiChungTuGoc("EXPORT"); setMaChungTuGoc("");}} className={`flex-1 py-2.5 text-xs font-bold rounded-lg transition-all ${loaiChungTuGoc === "EXPORT" ? "bg-white text-blue-600 shadow-sm" : "text-gray-400"}`}>PHIẾU XUẤT (BÁN)</button>
-                      <button onClick={() => {setLoaiChungTuGoc("IMPORT"); setMaChungTuGoc("");}} className={`flex-1 py-2.5 text-xs font-bold rounded-lg transition-all ${loaiChungTuGoc === "IMPORT" ? "bg-white text-emerald-600 shadow-sm" : "text-gray-400"}`}>PHIẾU NHẬP (MUA)</button>
+                      <button onClick={() => {setLoaiChungTuGoc("EXPORT"); setMaChungTuGoc(""); setTicketSearchTerm("");}} className={`flex-1 py-2.5 text-xs font-bold rounded-lg transition-all ${loaiChungTuGoc === "EXPORT" ? "bg-white text-blue-600 shadow-sm" : "text-gray-400"}`}>PHIẾU XUẤT (BÁN)</button>
+                      <button onClick={() => {setLoaiChungTuGoc("IMPORT"); setMaChungTuGoc(""); setTicketSearchTerm("");}} className={`flex-1 py-2.5 text-xs font-bold rounded-lg transition-all ${loaiChungTuGoc === "IMPORT" ? "bg-white text-emerald-600 shadow-sm" : "text-gray-400"}`}>PHIẾU NHẬP (MUA)</button>
                     </div>
-                    
-                    <select
-                      value={maChungTuGoc}
-                      onChange={(e) => setMaChungTuGoc(e.target.value)}
-                      className="w-full text-sm font-bold rounded-xl border border-gray-200 bg-gray-50 px-4 py-3 outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all"
-                    >
-                      <option value="">-- Chọn mã phiếu cần bảo hành --</option>
-                      {(loaiChungTuGoc === "EXPORT" ? danhSachPX : danhSachPN).map(t => {
-                        // 🌟 CẢI TIẾN: Truy xuất tên đối tác từ danh sách master data để hiển thị thay vì chỉ hiện mã số
-                        let partnerName = "";
-                        if (loaiChungTuGoc === "EXPORT") {
-                          partnerName = t.TenKH || danhSachKH.find(k => String(k.MaKH) === String(t.MaKH))?.TenKH || `KH #${t.MaKH}`;
-                        } else {
-                          partnerName = t.TenNCC || danhSachNCC.find(n => String(n.MaNCC) === String(t.MaNCC))?.TenNCC || `NCC #${t.MaNCC}`;
-                        }
-                        return (
-                          <option key={t.MaPhieu} value={t.MaPhieu}>
-                            [{t.MaPhieu}] - {partnerName}
-                          </option>
-                        );
-                      })}
-                    </select>
+
+                    <div className="relative">
+                      <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                      <input
+                        type="text"
+                        placeholder="Tìm nhanh mã phiếu hoặc đối tác..."
+                        className="w-full pl-10 pr-4 py-2 text-xs border border-gray-200 rounded-xl focus:ring-2 focus:ring-blue-500/20 outline-none bg-gray-50/50 font-medium"
+                        value={ticketSearchTerm}
+                        onChange={(e) => setTicketSearchTerm(e.target.value)}
+                      />
+                      {ticketSearchTerm && (
+                        <button type="button" onClick={() => setTicketSearchTerm("")} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 text-sm font-bold">×</button>
+                      )}
+                    </div>
+
+                    {/* 🌟 CẢI TIẾN: Danh sách kết quả chọn nhanh (Thay thế Select cũ) */}
+                    <div className="max-h-[220px] overflow-y-auto border border-gray-100 rounded-2xl bg-gray-50/50 p-2 space-y-1.5 scrollbar-thin">
+                      {filteredTicketsForSelect.length === 0 ? (
+                        <div className="py-6 text-center">
+                          <p className="text-[10px] text-gray-400 italic">Không tìm thấy mã phiếu nào khớp với từ khóa...</p>
+                        </div>
+                      ) : (
+                        filteredTicketsForSelect.map(t => {
+                          const isAlreadyActivated = activatedDocCodes.has(String(t.MaPhieu));
+                          const isSelected = String(maChungTuGoc) === String(t.MaPhieu);
+
+                          let partnerName = "";
+                          if (loaiChungTuGoc === "EXPORT") {
+                            partnerName = t.TenKH || danhSachKH.find(k => String(k.MaKH) === String(t.MaKH))?.TenKH || `KH #${t.MaKH}`;
+                          } else {
+                            partnerName = t.TenNCC || danhSachNCC.find(n => String(n.MaNCC) === String(t.MaNCC))?.TenNCC || `NCC #${t.MaNCC}`;
+                          }
+
+                          return (
+                            <button
+                              key={t.MaPhieu}
+                              type="button"
+                              disabled={isAlreadyActivated || (t.TrangThai !== "DaDuyet" && t.TrangThai !== "Đã duyệt")}
+                              onClick={() => {
+                                // Cảnh báo nếu cố tình click vào phiếu chưa duyệt (dù đã bị ẩn khỏi danh sách)
+                                if (t.TrangThai !== "DaDuyet" && t.TrangThai !== "Đã duyệt") {
+                                  alert("Chỉ có thể chọn các phiếu đã được phê duyệt để kích hoạt bảo hành.");
+                                  return;
+                                }
+                                setMaChungTuGoc(t.MaPhieu);
+                                setTicketSearchTerm(""); // Tự động xóa text search để giao diện gọn gàng sau khi chọn
+                              }}
+                              className={`w-full text-left p-3 rounded-xl transition-all border flex items-center justify-between group ${
+                                isSelected
+                                  ? "bg-blue-600 border-blue-600 text-white shadow-lg ring-2 ring-blue-500/20"
+                                  : (isAlreadyActivated || (t.TrangThai !== "DaDuyet" && t.TrangThai !== "Đã duyệt"))
+                                    ? "bg-gray-100 border-transparent opacity-50 cursor-not-allowed"
+                                    : "bg-white border-gray-100 hover:border-blue-300 hover:shadow-sm"
+                              }`}
+                            >
+                              <div className="flex flex-col">
+                                <span className={`text-xs font-black ${isSelected ? "text-white" : "text-gray-800"}`}>Mã: {t.MaPhieu}</span>
+                                <span className={`text-[10px] font-bold truncate max-w-[220px] ${isSelected ? "text-blue-100" : "text-gray-400 group-hover:text-blue-500"}`}>{partnerName}</span>
+                              </div>
+                              {isAlreadyActivated ? ( // Nếu đã kích hoạt
+                                <span className="text-[8px] font-black bg-red-100 text-red-600 px-2 py-0.5 rounded-full uppercase">Đã lập hồ sơ</span>
+                              ) : (t.TrangThai !== "DaDuyet" && t.TrangThai !== "Đã duyệt") ? ( // Nếu chưa duyệt
+                                <span className="text-[8px] font-black bg-amber-100 text-amber-600 px-2 py-0.5 rounded-full uppercase">Chưa duyệt</span>
+                              ) : isSelected ? (
+                                <CheckCircle size={16} className="text-white animate-in zoom-in"/>
+                              ) : (
+                                <ArrowRight size={14} className="text-gray-300 group-hover:text-blue-500 group-hover:translate-x-1 transition-all"/>
+                              )}
+                            </button>
+                          );
+                        })
+                      )}
+                    </div>
+
+                    {maChungTuGoc && activatedDocCodes.has(String(maChungTuGoc)) && (
+                      <p className="text-[10px] text-red-600 font-bold mt-1.5 animate-pulse">⚠️ Chứng từ này đã kích hoạt bảo hành, không thể thực hiện lại!</p>
+                    )}
                   </div>
 
                   <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 space-y-4">
@@ -826,11 +1072,13 @@ export default function PhieubaohanhPage() {
                     {maChungTuGoc && (
                       <div className="p-4 bg-blue-50 rounded-2xl border border-blue-100 animate-pulse">
                         <p className="text-[10px] text-blue-700 font-bold uppercase">Ngày hết hạn dự kiến:</p>
-                        <p className="text-lg font-black text-blue-800 mt-1">{calculateExpiry((loaiChungTuGoc === "EXPORT" ? danhSachPX : danhSachPN).find(t => t.MaPhieu === maChungTuGoc)?.NgayXuat || ngayTaoPhieu)}</p>
+                        <p className="text-lg font-black text-blue-800 mt-1">
+                          {currentExpiryPreview ? new Date(currentExpiryPreview).toLocaleDateString("vi-VN") : "—"}
+                        </p>
                       </div>
                     )}
                   </div>
-                  
+
                   <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 space-y-3">
                     <h4 className="text-[11px] font-black text-gray-400 uppercase tracking-widest border-b pb-2">Bước 3: Ghi chú phiếu</h4>
                     <textarea
@@ -849,7 +1097,7 @@ export default function PhieubaohanhPage() {
                       <h4 className="text-xs font-black text-gray-700 uppercase tracking-widest flex items-center gap-2"><Package size={16} className="text-blue-500"/> Nội dung hàng hóa bảo hành</h4>
                       <span className="text-[10px] font-bold bg-white border px-3 py-1 rounded-full text-gray-500">{itemsFromTicket.length} Mặt hàng được phát hiện</span>
                    </div>
-                   
+
                    <div className="flex-1 p-2 overflow-x-auto">
                       {loadingItems ? (
                         <div className="flex flex-col items-center justify-center h-full gap-3 text-gray-400 italic"><Loader2 className="animate-spin text-blue-500"/> Đang bóc tách dữ liệu từ chứng từ...</div>
@@ -858,8 +1106,9 @@ export default function PhieubaohanhPage() {
                            <thead>
                               <tr className="text-gray-400 font-black uppercase text-[10px] border-b">
                                  <th className="p-4">Sản phẩm</th>
-                                 <th className="p-4">Định danh (Serial/Lô)</th>
+                                 <th className="p-4">Barcode</th>
                                  <th className="p-4 text-center">Số lượng</th>
+                                 <th className="p-4 text-center">Hết hạn dự kiến</th>
                                  <th className="p-4 text-right">Trạng thái BH</th>
                               </tr>
                            </thead>
@@ -867,8 +1116,9 @@ export default function PhieubaohanhPage() {
                               {itemsFromTicket.map((item, idx) => (
                                 <tr key={idx} className="border-b last:border-0 hover:bg-gray-50 transition-colors">
                                    <td className="p-4 font-bold text-gray-800">{item.TenSanPham || `SP #${item.MaSanPham}`}</td>
-                                   <td className="p-4 font-mono text-blue-600 font-bold">{item.SoSerial || item.SoLo || "—"}</td>
+                                   <td className="p-4 font-mono text-blue-600 font-bold">{item.barcode || "—"}</td>
                                    <td className="p-4 text-center font-black text-gray-500">{item.SoLuong}</td>
+                                   <td className="p-4 text-center font-bold text-blue-600">{currentExpiryPreview ? new Date(currentExpiryPreview).toLocaleDateString("vi-VN") : "—"}</td>
                                    <td className="p-4 text-right"><span className="px-2 py-0.5 rounded bg-emerald-50 text-emerald-600 font-bold text-[9px]">SẴN SÀNG KÍCH HOẠT</span></td>
                                 </tr>
                               ))}
@@ -886,9 +1136,9 @@ export default function PhieubaohanhPage() {
 
               <div className="px-8 py-5 bg-white border-t flex justify-end gap-3 shrink-0">
                 <button onClick={() => setIsCreateModalOpen(false)} className="px-6 py-2.5 text-xs font-bold text-gray-500 hover:bg-gray-100 rounded-xl transition-all">Hủy bỏ</button>
-                <button 
+                <button
                   onClick={handleFinalSubmit}
-                  disabled={modalLoading || !maChungTuGoc}
+                  disabled={modalLoading || !maChungTuGoc || activatedDocCodes.has(String(maChungTuGoc))}
                   className="px-8 py-2.5 bg-blue-600 text-white rounded-xl text-xs font-black shadow-lg hover:bg-blue-700 transition-all disabled:opacity-50 flex items-center gap-2"
                 >
                   {modalLoading ? <Loader2 size={16} className="animate-spin"/> : <Save size={16}/>} XÁC NHẬN KÍCH HOẠT HỆ THỐNG
@@ -944,10 +1194,11 @@ export default function PhieubaohanhPage() {
                         <thead className="bg-gray-100 text-gray-500 font-bold uppercase text-[9px]">
                            <tr>
                               <th className="p-3 w-[25%]">Tên sản phẩm</th>
-                              <th className="p-3">Số Serial / Lô</th>
+                              <th className="p-3">Mã Barcode</th>
                               <th className="p-3 text-center">SL</th>
                               <th className="p-3">QR Code sản phẩm</th>
                               <th className="p-3 text-center">Ngày hết hạn BH</th>
+                              <th className="p-3 text-center">Thời gian còn lại</th>
                               <th className="p-3 text-right">Tình trạng</th>
                            </tr>
                         </thead>
@@ -967,8 +1218,8 @@ export default function PhieubaohanhPage() {
                                      <td className="p-3 font-bold text-gray-800 leading-tight">
                                         {item.TenSanPham || `SP #${item.MaSanPham || item.MaSP}`}
                                      </td>
-                                     <td className="p-3 font-mono text-[11px] font-bold text-blue-600">
-                                        {item.SoSerial || item.SoLo || "—"}
+                                     <td className="p-3 font-mono text-[11px] font-bold text-blue-600 break-all">
+                                        {item.barcode || "—"}
                                      </td>
                                      <td className="p-3 text-center">
                                         <span className="font-bold text-gray-600">
@@ -981,7 +1232,7 @@ export default function PhieubaohanhPage() {
                                             {item.QRCode}
                                           </span>
                                         ) : (
-                                          <span className="text-gray-300 italic text-[10px]">Chưa có QR</span>
+                                          <span className="text-gray-300 italic text-[10px]">Chưa có QR Code</span>
                                         )}
                                      </td>
                                      <td className="p-3 text-center font-bold">
@@ -990,6 +1241,9 @@ export default function PhieubaohanhPage() {
                                             {hanBH.toLocaleDateString("vi-VN")}
                                           </span>
                                         ) : "—"}
+                                     </td>
+                                     <td className="p-3 text-center font-medium text-blue-600">
+                                        {hanBH ? getRemainingTime(hanBH) : "—"}
                                      </td>
                                      <td className="p-3 text-right">
                                         {!hanBH ? (

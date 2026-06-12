@@ -27,11 +27,22 @@ const login = async (req, res) => {
                 tk.MatKhau,
                 tk.TrangThai,
                 tk.MaNhanVien,
+                nv.AnhDaiDien,
+                nv.SDT,
+                nv.Email,
+                nv.DiaChi,
                 vt.TenVaiTro,
                 nv.TenNhanVien,
                 nv.CCCD,
                 nv.TrangThai AS TrangThaiNV,
-                nv.IsDeleted
+                nv.IsDeleted,
+                (
+                    SELECT qh.MaQuyen, qh.TenQuyen, qh.MoTa
+                    FROM VaiTro_QuyenHan vtqh
+                    JOIN QuyenHan qh ON vtqh.MaQuyen = qh.MaQuyen
+                    WHERE vtqh.MaVaiTro = tk.MaVaiTro
+                    FOR JSON PATH
+                ) AS QuyenHan
             FROM TaiKhoan tk
             INNER JOIN VaiTro vt ON tk.MaVaiTro = vt.MaVaiTro
             INNER JOIN NhanVien nv ON tk.MaNhanVien = nv.MaNhanVien
@@ -91,8 +102,15 @@ const login = async (req, res) => {
             token,
             user: {
                 id:       user.MaTaiKhoan,
+                maNhanVien: user.MaNhanVien,
                 username: user.TenDangNhap,
-                role:     user.TenVaiTro
+                role:     user.TenVaiTro.trim(),
+                tenNhanVien: user.TenNhanVien,
+                anhDaiDien: user.AnhDaiDien,
+                sdt: user.SDT,
+                email: user.Email,
+                diaChi: user.DiaChi,
+                quyenHan: user.QuyenHan ? JSON.parse(user.QuyenHan) : []
             }
         });
 

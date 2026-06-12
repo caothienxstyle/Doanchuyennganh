@@ -6,7 +6,7 @@ const {
     createNhanVien,
     updateNhanVien,
     deleteNhanVien
-} = require("../controllers/nhienVienController");
+} = require("../controllers/nhanVienController");
 
 const authenticate = require("../middleware/authMiddleware");
 const authorize = require("../middleware/roleMiddleware");

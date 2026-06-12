@@ -6,7 +6,7 @@ import MainLayout from "../layouts/MainLayout";
 import DashboardGreeting from "../components/DashboardGreeting";
 import StatCard from "../components/StatCard";
 import DataTable from "../components/DataTable";
-import { ROLES } from "../services/auth";
+import { ROLES, normalizeUserSession } from "../services/auth";
 
 export default function AdminDashboard() {
   const navigate = useNavigate();
@@ -21,6 +21,19 @@ export default function AdminDashboard() {
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  // 🛡️ Quản lý thông tin người dùng hiện tại
+  const [currentUser, setCurrentUser] = useState(() => {
+    const savedUser = localStorage.getItem("user");
+    if (savedUser) {
+      try {
+        return normalizeUserSession(JSON.parse(savedUser));
+      } catch (e) {
+        return null;
+      }
+    }
+    return null;
+  });
 
   const getToken = () => localStorage.getItem("token") || localStorage.getItem("accessToken") || "";
 
@@ -87,14 +100,31 @@ export default function AdminDashboard() {
     }
   };
 
+  const syncUser = () => {
+    const savedUser = localStorage.getItem("user");
+    if (savedUser) {
+      try {
+        setCurrentUser(normalizeUserSession(JSON.parse(savedUser)));
+      } catch (e) {
+        console.error("Lỗi sync user tại AdminDashboard:", e);
+      }
+    }
+  };
+
   useEffect(() => {
+    syncUser();
     fetchDashboardData();
+
+    // Lắng nghe sự kiện để cập nhật Header/Dashboard ngay lập tức khi profile thay đổi
+    window.addEventListener("user-updated", syncUser);
+    return () => window.removeEventListener("user-updated", syncUser);
   }, []);
 
   return (
     <MainLayout role={ROLES.admin}>
       <DashboardGreeting
         role={ROLES.admin}
+        userName={currentUser?.TenNhanVien}
         description="Quản trị người dùng, phân quyền, hệ thống và dữ liệu"
       />
       
@@ -159,7 +189,7 @@ export default function AdminDashboard() {
               <h3 className="font-bold text-sm text-gray-700 mb-4">⚡ Thao tác xử lý nhanh</h3>
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
                 {[
-                  { label: "Quản lý tài khoản", icon: Users, path: "/accounts" },
+                  { label: "Quản lý tài khoản", icon: Users, path: "/tk" },
                   { label: "Phân quyền", icon: Shield, path: "/roles" },
                   { label: "Quản lý sản phẩm", icon: Package, path: "/products" },
                   { label: "Danh mục & ĐVT", icon: FolderTree, path: "/categories" },

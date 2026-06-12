@@ -35,7 +35,9 @@ export default function ProductPage() {
   const role = getCurrentRole();
   const isAdmin = role === ROLES.admin || String(role) === "1" || role === "Admin";
   const isManager = role === ROLES.manager || String(role) === "2" || role === "Quản lý kho";
-  const canManageProducts = isAdmin || isManager;
+  const isViewer = role === ROLES.staff || String(role) === "3" || role === "Nhân viên kho";
+  const canManageProducts = isAdmin || isManager || isViewer;
+  const canDeleteProducts = isAdmin || isManager;
 
   const [modalOpen, setModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
@@ -259,7 +261,13 @@ export default function ProductPage() {
       await refreshProducts();
       resetForm();
     } catch (err) {
-      setFormError(err?.response?.data?.message || err?.message || "Không thể lưu sản phẩm.");
+      // 🛡️ Xử lý thông báo thân thiện cho nhân viên khi chức năng bị gỡ bỏ (Lỗi 500/403)
+      const status = err?.response?.status;
+      if (status === 500 || status === 403) {
+        setFormError("Tài khoản của bạn không có quyền thực hiện thao tác này. Vui lòng liên hệ Quản trị viên để biết thêm chi tiết.");
+      } else {
+        setFormError(err?.response?.data?.message || err?.message || "Không thể lưu sản phẩm.");
+      }
     } finally {
       setIsSubmitting(false);
     }
@@ -374,7 +382,7 @@ export default function ProductPage() {
                     <Package size={14} className="text-gray-400" />
                   )}
                 </div>
-                <span className="font-mono font-bold text-indigo-600 text-xs">#{row.code || row.MaSP || val}</span>
+                <span className="font-mono font-bold text-indigo-600 text-xs">{row.code || row.MaSP || val}</span>
               </div>
             )
           },
@@ -433,7 +441,7 @@ export default function ProductPage() {
                 >
                   Sửa
                 </button>
-                {canManageProducts && (
+                {canDeleteProducts && (
                   <button
                     type="button"
                     onClick={() => handleDelete(row, refreshProducts)}

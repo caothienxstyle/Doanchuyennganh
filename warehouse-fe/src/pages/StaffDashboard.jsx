@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import axios from "axios";
 import {
   Package, FileInput, FileOutput, ClipboardCheck, AlertTriangle,
-  LayoutDashboard, Warehouse, FolderTree, MapPin, ShieldCheck, BarChart3
+  LayoutDashboard, Warehouse, FolderTree, MapPin, ShieldCheck, BarChart3, PlusCircle
 } from "lucide-react";
 import {
   Bar, BarChart, CartesianGrid, Cell, Pie, PieChart,
@@ -14,7 +14,7 @@ import DashboardGreeting from "../components/DashboardGreeting";
 import StatCard from "../components/StatCard";
 import DataTable from "../components/DataTable";
 import StatusBadge from "../components/StatusBadge";
-import { ROLES } from "../services/auth";
+import { ROLES, normalizeUserSession } from "../services/auth";
 import { menuByRole } from "../constants/menu"; // Import menuByRole
 import { getProducts } from "../services/productService";
 import { getTonKhoItems } from "../services/tonKhoService";
@@ -22,6 +22,17 @@ import { getTonKhoItems } from "../services/tonKhoService";
 export default function StaffDashboard() {
   const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
+  const [currentUser, setCurrentUser] = useState(() => {
+    const savedUser = localStorage.getItem("user");
+    if (savedUser) {
+      try {
+        return normalizeUserSession(JSON.parse(savedUser));
+      } catch (e) {
+        console.error("Lỗi đọc dữ liệu người dùng tại StaffDashboard:", e);
+      }
+    }
+    return null;
+  });
   const [stats, setStats] = useState({
     totalInventory: 0,
     importsToday: 0,
@@ -136,8 +147,25 @@ export default function StaffDashboard() {
     }
   };
 
+  // Hàm đồng bộ thông tin user từ localStorage
+  const syncUser = () => {
+    const savedUser = localStorage.getItem("user");
+    if (savedUser) {
+      try {
+        setCurrentUser(normalizeUserSession(JSON.parse(savedUser)));
+      } catch (e) {
+        console.error("Lỗi sync user tại StaffDashboard:", e);
+      }
+    }
+  };
+
   useEffect(() => {
+    syncUser(); // Chạy ngay khi mount để đảm bảo có dữ liệu sau login
     loadDashboardData();
+
+    // Lắng nghe sự kiện cập nhật profile (dùng cho trường hợp đổi ảnh/tên ở ProfilePage)
+    window.addEventListener("user-updated", syncUser);
+    return () => window.removeEventListener("user-updated", syncUser);
   }, []);
 
   const staffMenu = menuByRole[ROLES.staff];
@@ -147,9 +175,47 @@ export default function StaffDashboard() {
     return staffMenu.find(item => item.path === criteria || item.label === criteria);
   };
 
+  // 🚀 Hàm xử lý điều hướng thông minh khi nhấn vào thẻ KPI
+  const handleKpiClick = (type) => {
+    const todayStr = new Date().toISOString().split('T')[0];
+    
+    switch (type) {
+      case "TOTAL_INVENTORY":
+        navigate("/inventory");
+        break;
+      case "IMPORTS_TODAY":
+        localStorage.setItem("importDateFilter", todayStr);
+        navigate("/imports");
+        break;
+      case "EXPORTS_TODAY":
+        localStorage.setItem("exportDateFilter", todayStr);
+        navigate("/exports");
+        break;
+      case "PENDING_CHECKS":
+        localStorage.setItem("importStatusFilter", "ChoDuyet");
+        navigate("/imports");
+        break;
+      case "LOW_STOCK":
+        localStorage.setItem("inventoryStatusFilter", "DANGER"); // Lọc cả 'Sắp hết' và 'Hết hàng'
+        navigate("/inventory");
+        break;
+      default:
+        break;
+    }
+  };
+
+  // Danh sách các thao tác nhanh cho nhân viên
+  const quickActions = [
+    { label: "Tạo phiếu nhập", icon: FileInput, path: "/imports", color: "text-blue-600", bg: "bg-blue-50" },
+    { label: "Tạo phiếu xuất", icon: FileOutput, path: "/exports", color: "text-emerald-600", bg: "bg-emerald-50" },
+    { label: "Thêm sản phẩm", icon: Package, path: "/products", color: "text-orange-600", bg: "bg-orange-50" },
+    { label: "Báo cáo tồn kho", icon: AlertTriangle, path: "/reports", color: "text-red-600", bg: "bg-red-50" },
+  ];
+
   // Định nghĩa các StatCard dựa trên menu và dữ liệu mock
   const dashboardStatConfigs = [
     {
+      type: "TOTAL_INVENTORY",
       title: findMenuItem("/inventory")?.label || "Tổng tồn kho", // Lấy từ menu "Tồn kho"
       value: stats.totalInventory.toLocaleString(),
       note: "Sản phẩm thực tế",
@@ -157,6 +223,7 @@ export default function StaffDashboard() {
       color: "blue"
     },
     {
+      type: "IMPORTS_TODAY",
       title: findMenuItem("/imports")?.label || "Nhập hôm nay", // Lấy từ menu "Phiếu nhập"
       value: stats.importsToday,
       note: "Phiếu nhập mới",
@@ -164,6 +231,7 @@ export default function StaffDashboard() {
       color: "green"
     },
     {
+      type: "EXPORTS_TODAY",
       title: findMenuItem("/exports")?.label || "Xuất hôm nay", // Lấy từ menu "Phiếu xuất"
       value: stats.exportsToday,
       note: "Phiếu xuất mới",
@@ -171,6 +239,7 @@ export default function StaffDashboard() {
       color: "orange"
     },
     {
+      type: "PENDING_CHECKS",
       title: "Phiếu chờ duyệt", 
       value: stats.pendingChecks,
       note: "Xem chi tiết",
@@ -178,6 +247,7 @@ export default function StaffDashboard() {
       color: "purple"
     },
     {
+      type: "LOW_STOCK",
       title: "Sản phẩm sắp hết", 
       value: stats.lowStockCount,
       note: "Xem danh sách",
@@ -192,6 +262,7 @@ const pieColors = ["#2563eb", "#22c55e", "#f59e0b", "#8b5cf6"];
     <MainLayout role={ROLES.staff}>
       <DashboardGreeting
         role={ROLES.staff}
+        userName={currentUser?.TenNhanVien}
         description="Đây là tổng quan hoạt động kho ngày hôm nay"
       />
 
@@ -202,14 +273,19 @@ const pieColors = ["#2563eb", "#22c55e", "#f59e0b", "#8b5cf6"];
       {/* Các StatCard được tạo động từ cấu hình */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
         {dashboardStatConfigs.map((stat, index) => (
-          <StatCard
-            key={index}
-            title={stat.title}
-            value={stat.value}
-            note={stat.note}
-            icon={stat.icon}
-            color={stat.color}
-          />
+          <div 
+            key={index} 
+            onClick={() => handleKpiClick(stat.type)}
+            className="cursor-pointer transition-all hover:scale-[1.02] active:scale-95 group"
+          >
+            <StatCard
+              title={stat.title}
+              value={stat.value}
+              note={stat.note}
+              icon={stat.icon}
+              color={stat.color}
+            />
+          </div>
         ))}
       </div>
 
@@ -260,6 +336,25 @@ const pieColors = ["#2563eb", "#22c55e", "#f59e0b", "#8b5cf6"];
         </div>
       </div>
 
+      {/* ⚡ KHỐI THAO TÁC NHANH - Bổ sung cho giao diện nhân viên */}
+      <div className="bg-white p-5 rounded-2xl border border-gray-200 shadow-sm mb-6">
+        <h3 className="font-bold text-gray-800 text-base mb-4 flex items-center gap-2">
+          <PlusCircle size={18} className="text-blue-600"/> Thao tác nghiệp vụ nhanh
+        </h3>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {quickActions.map((action, idx) => (
+            <button
+              key={idx}
+              onClick={() => navigate(action.path)}
+              className={`flex items-center gap-3 p-3 rounded-xl border border-transparent hover:border-gray-200 transition-all ${action.bg} group shadow-xs`}
+            >
+              <action.icon className={`${action.color} group-hover:scale-110 transition-transform`} size={20} />
+              <span className="text-xs font-bold text-gray-700 uppercase tracking-tight">{action.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
         <section className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm">
           <div className="flex items-center justify-between mb-3">
@@ -302,7 +397,7 @@ const pieColors = ["#2563eb", "#22c55e", "#f59e0b", "#8b5cf6"];
         </section>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
+      {/* <div className="grid grid-cols-1 xl:grid-cols-2 gap-6">
         <section className="bg-white p-4 rounded-2xl border border-gray-200 shadow-sm">
           <div className="flex items-center justify-between mb-3">
             <div>
@@ -322,7 +417,7 @@ const pieColors = ["#2563eb", "#22c55e", "#f59e0b", "#8b5cf6"];
             data={incidentList}
           />
         </section>
-      </div>
+      </div> */}
       </>
       )}
     </MainLayout>

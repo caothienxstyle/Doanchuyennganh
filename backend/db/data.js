@@ -1,7 +1,8 @@
 const sql = require("mssql");
 
 const config = {
-    server: "host.docker.internal",
+    // server: "host.docker.internal",
+    server: "localhost",
     port: 1435,
     user: "sa",
     password: "Nhatthang@0901",

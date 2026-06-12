@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import MainLayout from "../layouts/MainLayout";
 import DataTable from "../components/DataTable";
-import StatusBadge from "../components/StatusBadge";
-import { ShieldCheck, Wrench, Calendar, Search, FileText, CheckCircle2, Clock } from "lucide-react";
+import StatusBadge from "../components/StatusBadge"; // Import StatusBadge
+import { Search, FileText, CheckCircle2, Clock, Plus, Package, XCircle, User, MapPin } from "lucide-react";
 import { ROLES, getCurrentRole } from "../services/auth";
 import { useNavigate } from "react-router-dom";
+import { getTonKhoItems } from "../services/tonKhoService";
 
 export default function ExportPage() {
   const navigate = useNavigate();
@@ -14,6 +15,8 @@ export default function ExportPage() {
   const [allProducts, setAllProducts] = useState([]);
   const [allCustomers, setAllCustomers] = useState([]); // LƯU DANH SÁCH KHÁCH HÀNG
   const [khoList, setKhoList] = useState([]); // LƯU DANH SÁCH KHO
+  const [viTriList, setViTriList] = useState([]); // LƯU DANH SÁCH VỊ TRÍ KHO
+  const [tonKhoList, setTonKhoList] = useState([]); // DỮ LIỆU TỒN KHO CHI TIẾT
   const [activatedWarranties, setActivatedWarranties] = useState([]); // Lưu vết phiếu đã kích hoạt BH
 
   // 🔢 Trạng thái Phân trang & Tìm kiếm
@@ -51,6 +54,8 @@ export default function ExportPage() {
     DiaChi: ""
   });
 
+  const [customerSearchTerm, setCustomerSearchTerm] = useState(""); // 🔍 Tìm kiếm KH trong modal
+  const [productSearchTermForTempItem, setProductSearchTermForTempItem] = useState(""); // 🔍 Tìm kiếm SP trong modal
   // Danh sách sản phẩm đang chọn trong Form
   const [currentChiTietList, setCurrentChiTietList] = useState([]);
   const [tempItem, setTempItem] = useState({ 
@@ -59,6 +64,10 @@ export default function ExportPage() {
     DonGia: "", 
     MaViTriCode: ""
   });
+
+  // Helpers định dạng tiền tệ
+  const formatNumberWithDots = (val) => String(val).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  const parseNumberFromDots = (val) => String(val).replace(/\D/g, "");
 
   const getToken = () => localStorage.getItem("token") || "";
 
@@ -150,13 +159,58 @@ export default function ExportPage() {
     }
   };
 
+  // 3.2 TẢI DANH SÁCH VỊ TRÍ KHO
+  const loadViTriList = async () => {
+    try {
+      const response = await fetch("http://localhost:3000/vitrikho/danhsach", {
+        method: "GET",
+        headers: { "Authorization": `Bearer ${getToken()}` }
+      });
+      const res = await response.json();
+      if (res.success) setViTriList(res.data || []);
+    } catch (err) {
+      console.error("Lỗi tải danh sách vị trí kho:", err);
+    }
+  };
+
+  // 3.3 TẢI DANH SÁCH TỒN KHO THỰC TẾ
+  const loadTonKho = async () => {
+    try {
+      const res = await getTonKhoItems();
+      const rawData = res?.data || res || [];
+      const normalized = rawData.map(item => {
+        const d = item?.data ?? item?.item ?? item ?? {};
+        const n = d?.tonKho ?? d?.tonkho ?? {};
+        return {
+          MaSanPham: String(d.MaSanPham || d.maSanPham || n.MaSanPham || d.id || ""),
+          MaKho: String(d.MaKho || n.MaKho || ""),
+          MaViTriCode: String(d.MaViTriCode || n.MaViTriCode || d.mavitricode || "").trim(),
+          SoLuongTon: Number(d.SoLuongTon ?? n.SoLuongTon ?? d.soLuongTon ?? 0)
+        };
+      });
+      setTonKhoList(normalized);
+    } catch (err) {
+      console.error("Lỗi tải tồn kho:", err);
+    }
+  };
+
   useEffect(() => {
     loadPhieuXuat();
     loadProducts();
     loadCustomers();
     loadKhoList();
+    loadViTriList(); // Tải danh sách vị trí kho
+    loadTonKho();   // Tải tồn kho chi tiết
     loadActivatedWarranties();
   }, []);
+
+  // Helper để định dạng chuỗi vị trí kho hiển thị
+  const formatLocationString = (vt) => {
+    if (!vt) return "";
+    return vt.TenViTriHienThi ||
+      [vt.KhuVuc, vt.DayKe, vt.Tang, vt.OKe].filter(Boolean).join(" / ") ||
+      vt.MaViTriCode || "Chưa xác định";
+  };
 
   // � Tự động khôi phục bộ lọc trạng thái từ Dashboard (nếu có)
   useEffect(() => {
@@ -182,6 +236,64 @@ export default function ExportPage() {
   useEffect(() => {
     setPageInput(String(currentPage));
   }, [currentPage]);
+
+  const filteredLocations = useMemo(() => {
+    return viTriList.filter(loc => String(loc.MaKho) === String(formData.MaKho));
+  }, [viTriList, formData.MaKho]);
+
+  // 🛡️ LỌC VỊ TRÍ CHỈ HIỂN THỊ NƠI CÓ HÀNG CỦA SẢN PHẨM ĐANG CHỌN
+  const selectableLocations = useMemo(() => {
+    if (!tempItem.MaSP) return filteredLocations;
+
+    const product = allProducts.find(p => String(p.MaSP || p.code || p.MaSanPhamCode) === String(tempItem.MaSP));
+    if (!product) return [];
+
+    const pid = String(product.id || product.MaSanPham || product.masanpham);
+    
+    // Tìm các vị trí trong kho hiện tại có tồn kho sản phẩm này > 0
+    const stockMap = new Set(
+      tonKhoList
+        .filter(s => s.MaSanPham === pid && s.MaKho === String(formData.MaKho) && s.SoLuongTon > 0)
+        .map(s => s.MaViTriCode)
+    );
+
+    return filteredLocations.filter(loc => stockMap.has(String(loc.MaViTriCode || loc.mavitricode)));
+  }, [tempItem.MaSP, filteredLocations, tonKhoList, allProducts, formData.MaKho]);
+
+  useEffect(() => {
+    if (selectableLocations.length > 0) {
+      setTempItem((prev) => ({ ...prev, MaViTriCode: selectableLocations[0].MaViTriCode || selectableLocations[0].mavitricode }));
+    } else {
+      setTempItem((prev) => ({ ...prev, MaViTriCode: "" }));
+    }
+  }, [selectableLocations]);
+
+  // 🚀 Lọc danh sách khách hàng trong Modal để người dùng chọn nhanh hơn
+  const filteredCustomersForModal = useMemo(() => {
+    if (!customerSearchTerm.trim()) return allCustomers;
+    const s = customerSearchTerm.toLowerCase();
+    return allCustomers.filter(cust => 
+      String(cust.TenKH || "").toLowerCase().includes(s) ||
+      String(cust.MaKHCode || "").toLowerCase().includes(s) ||
+      String(cust.SDT || "").toLowerCase().includes(s)
+    );
+  }, [allCustomers, customerSearchTerm]);
+
+  // 🚀 Lọc danh sách sản phẩm trong Modal để người dùng chọn nhanh hơn
+  const filteredProductsForTempItem = useMemo(() => {
+    if (!productSearchTermForTempItem.trim()) return allProducts;
+    const s = productSearchTermForTempItem.toLowerCase();
+    return allProducts.filter(p => 
+      String(p.name || p.TenSanPham || "").toLowerCase().includes(s) ||
+      String(p.code || p.MaSP || "").toLowerCase().includes(s)
+    );
+  }, [allProducts, productSearchTermForTempItem]);
+
+  // Helper để tìm sản phẩm đã chọn (dùng cho hiển thị tag)
+  const getSelectedProductInfo = useMemo(() => {
+    if (!tempItem.MaSP) return null;
+    return allProducts.find(p => String(p.MaSP || p.code) === String(tempItem.MaSP));
+  }, [tempItem.MaSP, allProducts]);
 
   // 🔍 LOGIC LỌC DỮ LIỆU THÔNG MINH
   const filteredList = phieuXuatList.filter((phieu) => {
@@ -271,7 +383,7 @@ export default function ExportPage() {
             MaSP: maThucTe,
             SoLuong: Number(item.SoLuong || 0),
             DonGia: Number(item.DonGia || 0),
-            MaViTriCode: item.MaViTriCode || item.MaViTri || "VT001"
+            MaViTriCode: String(item.MaViTriCode || item.MaViTri || "") // Đảm bảo là string, không hardcode mặc định
           };
         });
         setCurrentChiTietList(mappedChiTiet);
@@ -300,9 +412,28 @@ export default function ExportPage() {
 
   // THÊM SẢN PHẨM VÀO BẢNG
   const handleAddProductRow = () => {
-    if (!tempItem.MaSP || !tempItem.SoLuong || !tempItem.DonGia || !tempItem.MaViTriCode) {
-      alert("Vui lòng nhập đầy đủ thông tin hàng hóa và chọn Vị trí lấy hàng!");
+    if (!tempItem.MaSP) return alert("Vui lòng chọn một sản phẩm!");
+    const qty = Number(tempItem.SoLuong);
+    if (!qty || qty <= 0) return alert("Vui lòng nhập số lượng lớn hơn 0!");
+    if (tempItem.DonGia === "" || Number(tempItem.DonGia) < 0) return alert("Vui lòng nhập đơn giá!");
+    
+    if (!tempItem.MaViTriCode) {
+      alert("Lỗi: Sản phẩm này không có sẵn tại bất kỳ vị trí nào trong kho đã chọn!");
       return;
+    }
+
+    // 🔎 KIỂM TRA TỒN KHO THỰC TẾ TRƯỚC KHI THÊM
+    const product = allProducts.find(p => String(p.MaSP || p.code) === String(tempItem.MaSP));
+    const pid = String(product?.id || product?.MaSanPham);
+    const stock = tonKhoList.find(s => s.MaSanPham === pid && s.MaKho === String(formData.MaKho) && s.MaViTriCode === String(tempItem.MaViTriCode));
+    const available = Number(stock?.SoLuongTon || 0);
+
+    const alreadyInTable = currentChiTietList
+      .filter(item => String(item.MaSP) === String(tempItem.MaSP) && String(item.MaViTriCode) === String(tempItem.MaViTriCode))
+      .reduce((sum, item) => sum + Number(item.SoLuong), 0);
+
+    if (qty > (available - alreadyInTable)) {
+      return alert(`Không đủ hàng! Vị trí ${tempItem.MaViTriCode} chỉ còn ${available - alreadyInTable} sản phẩm khả dụng.`);
     }
 
     const existingIndex = currentChiTietList.findIndex(
@@ -325,7 +456,9 @@ export default function ExportPage() {
         }
       ]);
     }
-    setTempItem({ MaSP: "", SoLuong: "", DonGia: "", MaViTriCode: "" });
+    // Reset form nhưng giữ lại Vị trí mặc định nếu có
+    const defaultLoc = selectableLocations.length > 0 ? (selectableLocations[0].MaViTriCode || selectableLocations[0].mavitricode) : "";
+    setTempItem({ MaSP: "", SoLuong: "", DonGia: "", MaViTriCode: defaultLoc });
   };
 
   const handleRemoveProductRow = (index) => {
@@ -340,11 +473,12 @@ export default function ExportPage() {
     setFormData({
       MaPhieuXuat: "", 
       MaPhieu: `PX${Date.now().toString().slice(-6)}`, 
-      MaKhachHang: allCustomers[0]?.MaKH || "", // Chọn sẵn khách hàng đầu tiên nếu có
+      MaKhachHang: "", 
       MaKho: "1",
       GhiChu: "",
     });
     setCurrentChiTietList([]); 
+    setCustomerSearchTerm(""); // Reset tìm kiếm KH
     setIsFormModalOpen(true);
   };
 
@@ -594,7 +728,7 @@ export default function ExportPage() {
                 if (isActivated) return <span className="text-emerald-600 font-bold text-[10px] bg-emerald-50 px-2 py-1 rounded border border-emerald-100">Đã kích hoạt</span>;
                 // Chỉ cho phép kích hoạt khi phiếu đã được duyệt nhập/xuất kho
                 if (row.TrangThai === "DaDuyet" || row.TrangThai === "Đã duyệt") 
-                  return <button onClick={() => navigate("/warranty-slips", { state: { maPhieu: row.MaPhieu, type: "EXPORT" } })} className="text-blue-600 hover:underline text-[10px] font-bold">Kích hoạt BH</button>;
+                  return <button onClick={() => navigate("/PhieuBaoHanh", { state: { maPhieu: row.MaPhieu, type: "EXPORT" } })} className="text-blue-600 hover:underline text-[10px] font-bold">Kích hoạt BH</button>;
                 return <span className="text-gray-300 text-[10px] italic">Chưa duyệt</span>;
               }
             },
@@ -748,18 +882,82 @@ export default function ExportPage() {
                     </button>
                   </div>
                   <select
-                    required
-                    className="w-full border rounded-lg p-2 text-sm bg-white font-medium text-gray-700 focus:ring-2 focus:ring-blue-500"
-                    value={formData.MaKhachHang}
-                    onChange={(e) => setFormData({ ...formData, MaKhachHang: e.target.value })}
-                  >
-                    <option value="">-- Chọn khách hàng nhận --</option>
-                    {allCustomers.map(cust => (
-                      <option key={cust.MaKH} value={cust.MaKH}>
-                        [{cust.MaKHCode}] - {cust.TenKH}
-                      </option>
-                    ))}
-                  </select>
+                    className="hidden" // Ẩn select gốc
+                    value={formData.MaKhachHang} // Vẫn giữ giá trị
+                    onChange={(e) => setFormData({ ...formData, MaKhachHang: e.target.value })} // Vẫn xử lý thay đổi
+                  ></select>
+                  {/* 🚀 AUTCOMPLETE CHO KHÁCH HÀNG */}
+                  {!formData.MaKhachHang ? (
+                    <div className="space-y-2">
+                      <div className="relative">
+                        <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                        <input 
+                          type="text"
+                          autoFocus
+                          placeholder="Gõ tên hoặc mã KH để tìm nhanh..."
+                          className="w-full pl-10 pr-3 py-2.5 border rounded-xl text-sm outline-none focus:border-blue-500 bg-white shadow-sm transition-all"
+                          value={customerSearchTerm}
+                          onChange={(e) => setCustomerSearchTerm(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter' && filteredCustomersForModal.length > 0) {
+                              e.preventDefault();
+                              const cust = filteredCustomersForModal[0];
+                              setFormData({ ...formData, MaKhachHang: cust.MaKH });
+                              setCustomerSearchTerm("");
+                            }
+                          }}
+                        />
+                      </div>
+                      <div className="max-h-44 overflow-y-auto border border-gray-100 rounded-xl bg-gray-50/50 divide-y divide-gray-100 scrollbar-thin shadow-inner">
+                        {filteredCustomersForModal.length > 0 ? (
+                          filteredCustomersForModal.slice(0, 50).map((cust) => (
+                            <div 
+                              key={cust.MaKH}
+                              onClick={() => {
+                                setFormData({ ...formData, MaKhachHang: cust.MaKH });
+                                setCustomerSearchTerm("");
+                              }}
+                              className="p-3 hover:bg-blue-50 cursor-pointer transition-all flex items-center justify-between group"
+                            >
+                              <div className="flex flex-col">
+                                <span className="text-xs font-bold text-gray-700 group-hover:text-blue-700">{cust.TenKH}</span>
+                                <span className="text-[10px] text-gray-400 font-mono mt-0.5">Mã KH: {cust.MaKHCode || cust.MaKH}</span>
+                              </div>
+                              <Plus size={14} className="text-gray-300 group-hover:text-blue-500 transition-colors" />
+                            </div>
+                          ))
+                        ) : (
+                          <div className="p-4 text-center text-xs text-gray-400 italic">Không tìm thấy khách hàng nào...</div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-center justify-between p-3 border-2 border-blue-100 bg-blue-50/50 rounded-2xl animate-in zoom-in-95 duration-200">
+                      <div className="flex items-center gap-3">
+                        <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-sm">
+                          <User size={18} />
+                        </div>
+                        <div>
+                          {(() => {
+                            const c = allCustomers.find(cust => String(cust.MaKH) === String(formData.MaKhachHang));
+                            return (
+                              <>
+                                <p className="text-xs font-black text-blue-900">{c?.TenKH || c?.name || "Khách hàng đã chọn"}</p>
+                                <p className="text-[10px] font-bold text-blue-500 font-mono uppercase">Mã KH: {c?.MaKHCode || c?.code || "---"}</p>
+                              </>
+                            );
+                          })()}
+                        </div>
+                      </div>
+                      <button 
+                        type="button"
+                        onClick={() => setFormData({ ...formData, MaKhachHang: "" })}
+                        className="w-8 h-8 flex items-center justify-center rounded-full bg-blue-100 text-blue-600 hover:bg-red-50 hover:text-red-500 transition-all shadow-sm"
+                      >
+                        <XCircle size={18} />
+                      </button>
+                    </div>
+                  )}
                 </div>
 
                 <div>
@@ -785,55 +983,117 @@ export default function ExportPage() {
               <hr />
 
               {/* Bộ thêm sản phẩm nhanh */}
-              <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 space-y-3">
-                <span className="block text-xs font-bold text-blue-800 mb-2 uppercase">Thêm Mặt Hàng Xuất Kho</span>
-                
-                <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
-                  <div className="md:col-span-1">
-                    <label className="block text-[11px] font-medium text-gray-600 mb-1">Chọn sản phẩm</label>
-                    <select
-                      className="w-full border rounded-md p-1.5 text-sm bg-white font-medium text-gray-700" 
-                      value={tempItem.MaSP} 
-                      onChange={(e) => setTempItem({ ...tempItem, MaSP: e.target.value })}
-                    >
-                      <option value="">Chọn sản phẩm</option>
-                      {allProducts.map((prod) => {
-                        const id = prod.id || prod.MaSanPham || prod.masanpham;
-                        const name = prod.TenSanPham || prod.tensanpham;
-                        const productCode = prod.MaSP || prod.MaSanPhamCode || `SP${id}`; 
-                        
-                        return (
-                          <option key={id} value={productCode}>
-                            [{productCode}] - {name}
-                          </option>
-                        );
-                      })}
-                    </select>
+              <div className="bg-white p-5 rounded-2xl border border-gray-200 space-y-4 shadow-sm relative z-40">
+                <div className="flex items-center gap-2 mb-1 border-b border-gray-100 pb-2">
+                  <div className="p-1 bg-blue-100 rounded text-blue-600"><Package size={14}/></div>
+                  <span className="text-xs font-black text-gray-800 uppercase tracking-tight">Chọn hàng xuất kho</span>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-4 items-end">
+                  <div className="md:col-span-4">
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1.5 ml-1">Chọn Sản phẩm</label>
+                    {/* 🚀 AUTCOMPLETE CHO SẢN PHẨM */}
+                    {!tempItem.MaSP ? (
+                      <div className="space-y-2">
+                        <div className="relative">
+                          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                          <input 
+                            type="text"
+                            placeholder="Gõ tên hoặc mã sản phẩm để tìm nhanh..."
+                            className="w-full pl-10 pr-3 py-2.5 border rounded-xl text-sm outline-none focus:border-blue-500 bg-white shadow-sm transition-all"
+                            value={productSearchTermForTempItem}
+                            onChange={(e) => setProductSearchTermForTempItem(e.target.value)}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter' && filteredProductsForTempItem.length > 0) {
+                                e.preventDefault();
+                                const p = filteredProductsForTempItem[0];
+                                setTempItem({ ...tempItem, MaSP: p.MaSP || p.code });
+                                setProductSearchTermForTempItem("");
+                              }
+                            }}
+                          />
+                        </div>
+                        <div className="max-h-44 overflow-y-auto border border-gray-100 rounded-xl bg-gray-50/50 divide-y divide-gray-100 scrollbar-thin shadow-inner">
+                          {filteredProductsForTempItem.length > 0 ? (
+                            filteredProductsForTempItem.slice(0, 50).map((p) => (
+                              <div 
+                                key={p.id || p.MaSanPham}
+                                onClick={() => {
+                                  setTempItem({ ...tempItem, MaSP: p.MaSP || p.code });
+                                  setProductSearchTermForTempItem("");
+                                }}
+                                className="p-3 hover:bg-blue-50 cursor-pointer transition-all flex items-center justify-between group"
+                              >
+                                <div className="flex flex-col">
+                                  <span className="text-xs font-bold text-gray-700 group-hover:text-blue-700">{p.name || p.TenSanPham}</span>
+                                  <span className="text-[10px] text-gray-400 font-mono mt-0.5">Mã SP: {p.code || p.MaSP}</span>
+                                </div>
+                                <Plus size={14} className="text-gray-300 group-hover:text-blue-500 transition-colors" />
+                              </div>
+                            ))
+                          ) : (
+                            <div className="p-4 text-center text-xs text-gray-400 italic">Không tìm thấy sản phẩm này...</div>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between p-3 border-2 border-blue-100 bg-blue-50/50 rounded-2xl animate-in zoom-in-95 duration-200">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-sm">
+                            <Package size={18} />
+                          </div>
+                          <div>
+                          <p className="text-xs font-black text-blue-900">
+                            {getSelectedProductInfo?.name || getSelectedProductInfo?.TenSanPham || "Sản phẩm đã chọn"}
+                          </p>
+                          <p className="text-[10px] font-bold text-blue-500 font-mono uppercase">
+                            Mã SP: {getSelectedProductInfo?.code || getSelectedProductInfo?.MaSP || "---"}
+                          </p>
+                          </div>
+                        </div>
+                        <button 
+                          type="button"
+                          onClick={() => setTempItem({ ...tempItem, MaSP: "" })}
+                          className="w-8 h-8 flex items-center justify-center rounded-full bg-blue-100 text-blue-600 hover:bg-red-50 hover:text-red-500 transition-all shadow-sm"
+                        >
+                          <XCircle size={18} />
+                        </button>
+                      </div>
+                    )}
                   </div>
-                  <div>
-                    <label className="block text-[11px] font-medium text-gray-600 mb-1">Vị trí lấy hàng</label>
+                  <div className="md:col-span-3">
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1.5 ml-1">Vị trí lấy hàng</label>
                     <select
-                      className="w-full border rounded-md p-1.5 text-sm bg-white font-medium text-gray-700"
+                      className="w-full border border-gray-200 rounded-xl p-2 text-sm bg-white font-bold text-gray-700 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none"
                       value={tempItem.MaViTriCode}
                       onChange={(e) => setTempItem({ ...tempItem, MaViTriCode: e.target.value })}
                     >
                       <option value="">-- Chọn vị trí --</option>
-                      <option value="VT001">VT001 (A/D1/T1/O1)</option>
-                      <option value="VT002">VT002 (A/D1/T1/O2)</option>
-                      <option value="VT003">VT003 (B/D2/T1/O1)</option>
+                      {selectableLocations.length === 0 && <option value="">❌ Không có hàng trong kho này</option>}
+                      {selectableLocations.map(loc => (
+                        <option key={loc.MaViTriCode || loc.mavitricode} value={loc.MaViTriCode || loc.mavitricode}>{formatLocationString(loc)}</option>
+                      ))}
                     </select>
                   </div>
-                  <div>
-                    <label className="block text-[11px] font-medium text-gray-600 mb-1">Số lượng xuất</label>
-                    <input type="number" min="1" className="w-full border rounded-md p-1.5 text-sm bg-white [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" value={tempItem.SoLuong} onChange={(e) => setTempItem({ ...tempItem, SoLuong: e.target.value })} />
+                  <div className="md:col-span-2">
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1.5 ml-1">Số lượng</label>
+                    <input  className="w-full border border-gray-200 rounded-xl p-2 text-sm bg-white font-bold text-blue-600 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none text-center" value={tempItem.SoLuong} onChange={(e) => setTempItem({ ...tempItem, SoLuong: e.target.value })} placeholder="0" />
                   </div>
-                  <div>
-                    <label className="block text-[11px] font-medium text-gray-600 mb-1">Đơn giá xuất</label>
-                    <input type="number" min="0" className="w-full border rounded-md p-1.5 text-sm bg-white [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" value={tempItem.DonGia} onChange={(e) => setTempItem({ ...tempItem, DonGia: e.target.value })} />
+                  <div className="md:col-span-2">
+                    <label className="block text-[10px] font-bold text-gray-400 uppercase mb-1.5 ml-1">Đơn giá (đ)</label>
+                    <input 
+                      type="text" 
+                      className="w-full border border-gray-200 rounded-xl p-2 text-sm bg-white font-bold text-gray-700 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all outline-none text-right" 
+                      value={formatNumberWithDots(tempItem.DonGia)} 
+                      onChange={(e) => setTempItem({ ...tempItem, DonGia: parseNumberFromDots(e.target.value) })} 
+                      placeholder="0" 
+                    />
                   </div>
-                  <button type="button" onClick={handleAddProductRow} className="w-full bg-blue-600 hover:bg-blue-700 text-white text-xs font-bold py-2 rounded-md transition-all shadow-sm">
-                    + Thêm vào bảng
-                  </button>
+                  <div className="md:col-span-1 self-end">
+                    <button type="button" onClick={handleAddProductRow} className="w-full h-9 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-lg flex items-center justify-center transition-all active:scale-90 shadow-blue-200/50">
+                      <Plus size={20} />
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -866,10 +1126,12 @@ export default function ExportPage() {
                               className="w-full border rounded px-1 py-1 text-xs bg-white"
                               value={item.MaViTriCode}
                               onChange={(e) => handleInlineChange(index, "MaViTriCode", e.target.value)}
+                              required
                             >
-                              <option value="VT001">VT001 (A/D1/T1/O1)</option>
-                              <option value="VT002">VT002 (A/D1/T1/O2)</option>
-                              <option value="VT003">VT003 (B/D2/T1/O1)</option>
+                              {filteredLocations.length === 0 && <option value="">❌ Kho chưa cấu hình vị trí</option>}
+                              {filteredLocations.map(loc => (
+                                <option key={loc.MaViTriCode || loc.mavitricode} value={loc.MaViTriCode || loc.mavitricode}>{formatLocationString(loc)}</option>
+                              ))}
                             </select>
                           </td>
                           <td className="p-2 border text-center">

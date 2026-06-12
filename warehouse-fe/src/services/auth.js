@@ -98,9 +98,25 @@ export function getRoleInfo(role) {
 // AUTH
 // =========================
 
+export function normalizeUserSession(user) {
+  if (!user || typeof user !== "object") {
+    return user;
+  }
+
+  const avatar = user.AnhDaiDien || user.anhDaiDien || user.avatar || user.image || "";
+
+  return {
+    ...user,
+    role: user.role || user.TenVaiTro || user.tenVaiTro || "",
+    AnhDaiDien: avatar,
+    avatar,
+    image: avatar,
+  };
+}
+
 export function getCurrentRole() {
   try {
-    const user = JSON.parse(localStorage.getItem("user"));
+    const user = normalizeUserSession(JSON.parse(localStorage.getItem("user")));
 
     if (user && isValidRole(user.role)) {
       return normalizeRole(user.role);
@@ -114,7 +130,7 @@ export function getCurrentRole() {
 
 export function getCurrentUser(fallbackRole = ROLES.staff) {
   try {
-    const savedUser = JSON.parse(localStorage.getItem("user"));
+    const savedUser = normalizeUserSession(JSON.parse(localStorage.getItem("user")));
 
     if (savedUser) {
       const role = normalizeRole(savedUser.role) || fallbackRole;

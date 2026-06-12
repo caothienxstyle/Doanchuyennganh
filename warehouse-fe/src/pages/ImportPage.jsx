@@ -2,7 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import MainLayout from "../layouts/MainLayout";
 import DataTable from "../components/DataTable";
 import StatusBadge from "../components/StatusBadge";
-import { Search, FileText, CheckCircle2, Clock, Truck } from "lucide-react";
+import { Search, FileText, CheckCircle2, Clock, Truck, Plus, Package, XCircle } from "lucide-react";
 import { 
   getAllPhieuNhap, 
   createPhieuNhap, 
@@ -56,6 +56,8 @@ export default function ImportPage() {
     HanSuDung: ""
   });
 
+  const [supplierSearchTerm, setSupplierSearchTerm] = useState(""); // 🔍 Tìm kiếm NCC trong modal
+  const [productSearchTermForTempItem, setProductSearchTermForTempItem] = useState(""); // 🔍 Tìm kiếm SP trong modal
   // ==========================================
   // STATE THÊM NHANH SẢN PHẨM (CÓ TẠO MỚI DM/ĐVT)
   // ==========================================
@@ -407,12 +409,16 @@ export default function ImportPage() {
         headers,
         body: JSON.stringify(productPayload)
       });
-      
+
+      const prodRes = await prodResponse.json().catch(() => ({}));
+
       if (!prodResponse.ok) {
-        throw new Error(`HTTP error! status: ${prodResponse.status}`);
+        // 🛡️ Bắt lỗi khi chức năng đã bị gỡ bỏ hoặc bị chặn quyền ở Backend
+        if (prodResponse.status === 500 || prodResponse.status === 403) {
+          throw new Error("Tài khoản của bạn không có quyền thực hiện chức năng này hoặc chức năng đã bị quản trị viên tạm gỡ bỏ.");
+        }
+        throw new Error(prodRes.message || `Lỗi hệ thống (${prodResponse.status})`);
       }
-      
-      const prodRes = await prodResponse.json();
 
       if (!prodRes.success) throw new Error(prodRes.message || "Không thể lưu sản phẩm.");
       
@@ -422,7 +428,7 @@ export default function ImportPage() {
 
       if (productId) {
         const newRow = {
-          MaSP: productId,
+          MaSP: Number(productId),
           SoLuong: Number(quickProductForm.soLuongTon) || 0,
           DonGia: 0, // Mặc định 0 để người dùng tự điền giá nhập thực tế
           MaViTriCode: tempItem.MaViTriCode || (filteredLocations.length > 0 ? filteredLocations[0].MaViTriCode : ""),
@@ -506,6 +512,43 @@ export default function ImportPage() {
       vt.MaViTriCode || "Chưa xác định";
   };
 
+  // Helper: Định dạng số có dấu chấm hàng nghìn (VD: 1.000.000)
+  const formatNumberWithDots = (val) => {
+    if (val === undefined || val === null || val === "") return "";
+    return String(val).replace(/\B(?=(\d{3})+(?!\d))/g, ".");
+  };
+
+  // Helper: Gỡ bỏ dấu chấm để lấy giá trị số nguyên phục vụ tính toán
+  const parseNumberFromDots = (val) => {
+    return String(val).replace(/\D/g, "");
+  };
+
+  // 🚀 Lọc danh sách nhà cung cấp trong Modal để người dùng chọn nhanh hơn
+  const filteredNhaCungCapForModal = useMemo(() => {
+    if (!supplierSearchTerm.trim()) return nhaCungCapList;
+    const s = supplierSearchTerm.toLowerCase();
+    return nhaCungCapList.filter(ncc => 
+      String(ncc.TenNCC || "").toLowerCase().includes(s) ||
+      String(ncc.MaNCCCode || "").toLowerCase().includes(s)
+    );
+  }, [nhaCungCapList, supplierSearchTerm]);
+
+  // 🚀 Lọc danh sách sản phẩm trong Modal để người dùng chọn nhanh hơn
+  const filteredProductsForTempItem = useMemo(() => {
+    if (!productSearchTermForTempItem.trim()) return allProducts;
+    const s = productSearchTermForTempItem.toLowerCase();
+    return allProducts.filter(p => 
+      String(p.name || p.TenSanPham || "").toLowerCase().includes(s) ||
+      String(p.code || p.MaSP || "").toLowerCase().includes(s)
+    );
+  }, [allProducts, productSearchTermForTempItem]);
+
+  // Helper để tìm sản phẩm đã chọn (dùng cho hiển thị tag)
+  const getSelectedProductInfo = useMemo(() => {
+    if (!tempItem.MaSP) return null;
+    return allProducts.find(p => String(p.id || p.MaSanPham || p.masanpham) === String(tempItem.MaSP));
+  }, [tempItem.MaSP, allProducts]);
+
   const filteredLocations = viTriList.filter((loc) => String(loc.MaKho) === String(formData.MaKho));
 
   useEffect(() => {
@@ -545,17 +588,28 @@ export default function ImportPage() {
         GhiChu: row.GhiChu || "",
       });
 
+      setSupplierSearchTerm(""); // Reset tìm kiếm NCC khi mở sửa
       const res = await getChiTietPhieuNhap(row.MaPhieuNhap);
       if (res.success && Array.isArray(res.data)) {
-        const mappedDetails = res.data.map(item => ({
-          MaSP: item.MaSP || item.MaSPCode || item.MaSanPham || item.masanpham,
-          SoLuong: Number(item.SoLuong || 0),
-          DonGia: Number(item.DonGia || 0),
-          MaViTriCode: item.MaViTriCode || item.mavitricode || item.MaViTri || "",
-          NgaySanXuat: item.NgaySanXuat ? item.NgaySanXuat.split("T")[0] : "",
-          HanSuDung: item.HanSuDung ? item.HanSuDung.split("T")[0] : ""
-        }));
+        const mappedDetails = res.data.map(item => {
+          // 🔍 Giải quyết vấn đề 'locCode: 1': Tìm Mã Code thực tế từ ID số nếu BE trả về ID
+          let resolvedCode = item.MaViTriCode || item.mavitricode;
+          if (!resolvedCode && (item.MaViTri || item.mavitri)) {
+            const found = viTriList.find(v => String(v.MaViTri || v.mavitri) === String(item.MaViTri || item.mavitri));
+            if (found) resolvedCode = found.MaViTriCode || found.mavitricode;
+          }
+
+          return {
+            MaSP: Number(item.MaSP || item.MaSPCode || item.MaSanPham || item.masanpham),
+            SoLuong: Number(item.SoLuong || 0),
+            DonGia: Number(item.DonGia || 0),
+            MaViTriCode: String(resolvedCode || item.MaViTri || item.mavitri || "").trim(),
+            NgaySanXuat: item.NgaySanXuat ? item.NgaySanXuat.split("T")[0] : "",
+            HanSuDung: item.HanSuDung ? item.HanSuDung.split("T")[0] : ""
+          };
+        });
         setCurrentChiTietList(mappedDetails);
+        setProductSearchTermForTempItem(""); // Reset tìm kiếm SP khi mở sửa
       }
       setIsFormModalOpen(true);
     } catch (err) {
@@ -568,7 +622,7 @@ export default function ImportPage() {
     if (field === "MaViTriCode" || field === "NgaySanXuat" || field === "HanSuDung") {
       updatedList[index] = { ...updatedList[index], [field]: value };
     } else {
-      updatedList[index] = { ...updatedList[index], [field]: value === "" ? 0 : Number(value) };
+      updatedList[index] = { ...updatedList[index], [field]: value === "" ? "" : Number(value) };
     }
     setCurrentChiTietList(updatedList);
   };
@@ -577,7 +631,7 @@ export default function ImportPage() {
     // Kiểm tra chi tiết từng trường để báo lỗi chính xác
     if (!tempItem.MaSP) return alert("Vui lòng chọn một sản phẩm!");
     if (!tempItem.SoLuong || Number(tempItem.SoLuong) <= 0) return alert("Vui lòng nhập số lượng lớn hơn 0!");
-    if (tempItem.DonGia === "" || Number(tempItem.DonGia) < 0) return alert("Vui lòng nhập đơn giá (tối thiểu là 0)!");
+    if (tempItem.DonGia === "" || Number(tempItem.DonGia) <= 0) return alert("Vui lòng nhập đơn giá lớn hơn 0!");
     
     if (!tempItem.MaViTriCode) {
       alert("Lỗi: Vị trí lưu trữ đang trống. Vui lòng chọn kho có cấu hình vị trí!");
@@ -599,7 +653,7 @@ export default function ImportPage() {
       setCurrentChiTietList([
         ...currentChiTietList,
         {
-          MaSP: Number(tempItem.MaSP),
+          MaSP: Number(tempItem.MaSP), // Đồng bộ kiểu số
           SoLuong: Number(tempItem.SoLuong),
           DonGia: Number(tempItem.DonGia),
           MaViTriCode: String(tempItem.MaViTriCode),
@@ -639,13 +693,50 @@ const handleOpenCreate = () => {
   });
   setCurrentChiTietList([]);
   setIsFormModalOpen(true);
+  setSupplierSearchTerm(""); // Reset tìm kiếm NCC
+  setProductSearchTermForTempItem(""); // Reset tìm kiếm SP
 };
   const handleSubmitForm = async (e) => {
     e.preventDefault();
+
+    if (!formData.MaNhaCungCap) {
+      alert("Vui lòng chọn đối tác cung ứng (Nhà cung cấp) trước khi lưu phiếu!");
+      return;
+    }
+
     if (currentChiTietList.length === 0) {
       alert("Phiếu nhập phải có ít nhất 1 mặt hàng!");
       return;
     }
+
+    if (calculatedTotal <= 0) {
+      alert("Lỗi: Tổng giá trị thành tiền của phiếu nhập phải lớn hơn 0!");
+      return;
+    }
+
+    // 🛡️ KIỂM TRA TÍNH LOGIC: Đảm bảo mọi dòng hàng đều có Vị trí kho hợp lệ thuộc Kho đã chọn
+    const validLocCodes = new Set(filteredLocations.map(l => String(l.MaViTriCode || l.mavitricode || "").trim()));
+    const validLocIds = new Set(filteredLocations.map(l => String(l.MaViTri || l.mavitri || "").trim()));
+    
+    const hasInvalidItem = currentChiTietList.some((item, idx) => {
+      const locCode = String(item.MaViTriCode || "").trim();
+      // Kiểm tra xem giá trị hiện tại có khớp với bất kỳ Mã Code hoặc ID nào của kho đang chọn không
+      const isLocValid = validLocCodes.has(locCode) || validLocIds.has(locCode);
+      const isQtyValid = Number(item.SoLuong) > 0;
+      const isPriceValid = Number(item.DonGia) > 0;
+      
+      if (!isLocValid || !isQtyValid || !isPriceValid) {
+        console.warn(`Dòng hàng #${idx + 1} không hợp lệ:`, { locCode, isLocValid, isQtyValid, isPriceValid });
+        return true;
+      }
+      return false;
+    });
+
+    if (hasInvalidItem) {
+      alert("Dữ liệu không hợp lệ! Vui lòng kiểm tra lại bảng hàng hóa:\n1. Đảm bảo mọi sản phẩm đều đã được gán Vị trí kho chính xác (thuộc đúng kho đang chọn bên trên).\n2. Số lượng và đơn giá phải lớn hơn 0.");
+      return;
+    }
+
     try {
       const payload = {
         MaPhieuNhap: formData.MaPhieuNhap ? Number(formData.MaPhieuNhap) : undefined,
@@ -654,14 +745,23 @@ const handleOpenCreate = () => {
         MaKho: Number(formData.MaKho),
         TongTien: calculatedTotal,
         GhiChu: formData.GhiChu,
-        ChiTiet: currentChiTietList.map(item => ({
-          MaSP: item.MaSP,
-          SoLuong: item.SoLuong,
-          DonGia: item.DonGia,
-          MaViTriCode: item.MaViTriCode,
-          NgaySanXuat: item.NgaySanXuat || null,
-          HanSuDung: item.HanSuDung || null
-        }))
+        ChiTiet: currentChiTietList.map(item => {
+          // 🔍 Tìm ID số (MaViTri) từ danh sách gốc dựa trên Code đang có trong hàng
+          const foundLoc = viTriList.find(v => 
+            String(v.MaViTriCode || v.mavitricode) === String(item.MaViTriCode).trim() ||
+            String(v.MaViTri || v.mavitri) === String(item.MaViTriCode).trim()
+          );
+          return {
+            MaSP: item.MaSP,
+            SoLuong: item.SoLuong,
+            DonGia: item.DonGia,
+            // 🛡️ Gửi đồng thời cả ID số (MaViTri) để Backend không bị lỗi NULL
+            MaViTri: foundLoc ? (foundLoc.MaViTri || foundLoc.mavitri) : null,
+            MaViTriCode: item.MaViTriCode,
+            NgaySanXuat: item.NgaySanXuat || null,
+            HanSuDung: item.HanSuDung || null
+          };
+        })
       };
 
       const res = modalMode === "CREATE" ? await createPhieuNhap(payload) : await updatePhieuNhap(payload);
@@ -802,7 +902,7 @@ const handleOpenCreate = () => {
               render: (_, row) => {
                 const isActivated = activatedWarranties.some(w => String(w.MaPhieuGoc) === String(row.MaPhieu));
                 if (isActivated) return <span className="text-emerald-600 font-bold text-[10px] bg-emerald-50 px-2 py-1 rounded border border-emerald-100">Đã kích hoạt</span>;
-                if (row.TrangThai === "DaDuyet" || row.TrangThai === "Đã duyệt") return <button onClick={() => navigate("/warranty-slips", { state: { maPhieu: row.MaPhieu, type: "IMPORT" } })} className="text-blue-600 hover:underline text-[10px] font-bold">Kích hoạt BH</button>;
+                if (row.TrangThai === "DaDuyet" || row.TrangThai === "Đã duyệt") return <button onClick={() => navigate("/PhieuBaoHanh", { state: { maPhieu: row.MaPhieu, type: "IMPORT" } })} className="text-blue-600 hover:underline text-[10px] font-bold">Kích hoạt BH</button>;
                 return <span className="text-gray-300 text-[10px] italic">Chưa duyệt</span>;
               }
             },
@@ -960,36 +1060,86 @@ const handleOpenCreate = () => {
                 <div>
                       <div className="relative">
                         <div className="flex justify-between items-center mb-1">
-                          <label className="block text-xs font-medium text-gray-700">Nhà Cung Cấp</label>
+                          <label className="block text-xs font-medium text-gray-700">Nhà Cung Cấp <span className="text-red-500">*</span></label>
                           <button
                             type="button"
                             onClick={() => {
                               setNccFormData({ MaNCCCode: "", TenNCC: "", NguoiLienHe: "", SDT: "", Email: "", DiaChi: "" });
                               setIsQuickNCCModalOpen(true);
                             }}
-                            className="text-[10px] font-bold text-blue-600 hover:underline"
+                            className="text-[10px] font-bold text-blue-600 hover:underline flex items-center gap-1"
                           >
-                            ⚡ Tạo nhanh NCC
+                            <Plus size={12}/> Tạo nhanh NCC
                           </button>
                         </div>
-                        <select 
-                          required 
-                          className="w-full border rounded-lg p-2 text-sm bg-white text-gray-700" 
-                          value={formData.MaNhaCungCap} 
-                          onChange={(e) => setFormData({ ...formData, MaNhaCungCap: e.target.value })}
-                        >
-                          <option value="">-- Chọn đối tác cung ứng --</option>
-                          {nhaCungCapList.map((ncc) => (
-                            <option key={ncc.MaNCC} value={ncc.MaNCC}>{ncc.TenNCC}</option>
-                          ))}
-                        </select>
+                        {/* 🚀 AUTCOMPLETE CHO NHÀ CUNG CẤP */}
+                        {!formData.MaNhaCungCap ? (
+                          <div className="space-y-2">
+                            <div className="relative">
+                              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                              <input 
+                                type="text"
+                                autoFocus
+                                placeholder="Gõ tên hoặc mã NCC để tìm nhanh..."
+                                className="w-full pl-10 pr-3 py-2.5 border rounded-xl text-sm outline-none focus:border-blue-500 bg-white shadow-sm transition-all"
+                                value={supplierSearchTerm}
+                                onChange={(e) => setSupplierSearchTerm(e.target.value)}
+                              />
+                            </div>
+                            <div className="max-h-44 overflow-y-auto border border-gray-100 rounded-xl bg-gray-50/50 divide-y divide-gray-100 scrollbar-thin shadow-inner">
+                              {filteredNhaCungCapForModal.length > 0 ? (
+                                filteredNhaCungCapForModal.slice(0, 50).map((ncc) => (
+                                  <div 
+                                    key={ncc.MaNCC}
+                                    onClick={() => {
+                                      setFormData({ ...formData, MaNhaCungCap: ncc.MaNCC });
+                                      setSupplierSearchTerm("");
+                                    }}
+                                    className="p-3 hover:bg-blue-50 cursor-pointer transition-all flex items-center justify-between group"
+                                  >
+                                    <div className="flex flex-col">
+                                      <span className="text-xs font-bold text-gray-700 group-hover:text-blue-700">{ncc.TenNCC}</span>
+                                      <span className="text-[10px] text-gray-400 font-mono mt-0.5">Mã NCC: {ncc.MaNCCCode || ncc.MaNCC}</span>
+                                    </div>
+                                    <Plus size={14} className="text-gray-300 group-hover:text-blue-500 transition-colors" />
+                                  </div>
+                                ))
+                              ) : (
+                                <div className="p-4 text-center text-xs text-gray-400 italic">Không tìm thấy nhà cung cấp nào...</div>
+                              )}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-between p-3 border-2 border-blue-100 bg-blue-50/50 rounded-2xl animate-in zoom-in-95 duration-200">
+                            <div className="flex items-center gap-3">
+                              <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-sm">
+                                <Truck size={18} />
+                              </div>
+                              <div>
+                                <p className="text-xs font-black text-blue-900">
+                                  {nhaCungCapList.find(n => String(n.MaNCC) === String(formData.MaNhaCungCap))?.TenNCC || "Nhà cung cấp đã chọn"}
+                                </p>
+                                <p className="text-[10px] font-bold text-blue-500 font-mono uppercase">
+                                  Mã NCC: {nhaCungCapList.find(n => String(n.MaNCC) === String(formData.MaNhaCungCap))?.MaNCCCode || "---"}
+                                </p>
+                              </div>
+                            </div>
+                            <button 
+                              type="button"
+                              onClick={() => setFormData({ ...formData, MaNhaCungCap: "" })}
+                              className="w-8 h-8 flex items-center justify-center rounded-full bg-blue-100 text-blue-600 hover:bg-red-50 hover:text-red-500 transition-all shadow-sm"
+                            >
+                              <XCircle size={18} />
+                            </button>
+                          </div>
+                        )}
                       </div>
                 </div>
                 <div>
                   <label className="block text-xs font-medium text-gray-700 mb-1">Kho Nhận Hàng</label>
                   <select 
                     required 
-                    className="w-full border border-blue-400 rounded-lg p-2 text-sm font-bold text-blue-600 bg-blue-50" 
+                    className="w-full border border-gray-200 rounded-xl p-2.5 text-sm bg-white font-bold text-gray-700 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" 
                     value={formData.MaKho} 
                     onChange={(e) => setFormData({ ...formData, MaKho: e.target.value })}
                   >
@@ -1014,24 +1164,74 @@ const handleOpenCreate = () => {
                 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                   <div>
-                    <label className="block text-[11px] font-medium text-gray-600 mb-1 flex justify-between items-center">
-                      <span>Chọn Sản Phẩm</span>
+                    <label className="block text-[11px] font-medium text-gray-600 mb-1 flex justify-between items-center">Chọn Sản Phẩm <span className="text-red-500">*</span>
                       <button type="button" onClick={handleOpenQuickProductModal} className="text-[10px] text-blue-600 font-bold hover:underline">+ Thêm SP mới</button>
                     </label>
-                    <select className="w-full border rounded-md p-1.5 text-sm bg-white text-gray-700" value={tempItem.MaSP} onChange={(e) => setTempItem({ ...tempItem, MaSP: e.target.value })}>
-                      <option value="">-- Chọn sản phẩm --</option>
-                      {allProducts.map((prod) => {
-                        const id = prod.id || prod.MaSanPham || prod.masanpham;
-                        const name = prod.name || prod.TenSanPham || prod.tensanpham;
-                        const code = prod.code || prod.MaSP || "";
-                        return <option key={id} value={id}>{code ? `[${code}] ` : ""}{name}</option>;
-                      })}
-                    </select>
+                    {/* 🚀 AUTCOMPLETE CHO SẢN PHẨM */}
+                    {!tempItem.MaSP ? (
+                      <div className="space-y-2">
+                        <div className="relative">
+                          <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                          <input 
+                            type="text"
+                            placeholder="Gõ tên hoặc mã sản phẩm để tìm nhanh..."
+                            className="w-full pl-10 pr-3 py-2.5 border rounded-xl text-sm outline-none focus:border-blue-500 bg-white shadow-sm transition-all"
+                            value={productSearchTermForTempItem}
+                            onChange={(e) => setProductSearchTermForTempItem(e.target.value)}
+                          />
+                        </div>
+                        <div className="max-h-44 overflow-y-auto border border-gray-100 rounded-xl bg-gray-50/50 divide-y divide-gray-100 scrollbar-thin shadow-inner">
+                          {filteredProductsForTempItem.length > 0 ? (
+                            filteredProductsForTempItem.slice(0, 50).map((p) => (
+                              <div 
+                                key={p.id || p.MaSanPham}
+                                onClick={() => {
+                                  setTempItem({ ...tempItem, MaSP: p.id || p.MaSanPham });
+                                  setProductSearchTermForTempItem("");
+                                }}
+                                className="p-3 hover:bg-blue-50 cursor-pointer transition-all flex items-center justify-between group"
+                              >
+                                <div className="flex flex-col">
+                                  <span className="text-xs font-bold text-gray-700 group-hover:text-blue-700">{p.name || p.TenSanPham}</span>
+                                  <span className="text-[10px] text-gray-400 font-mono mt-0.5">Mã SP: {p.code || p.MaSP}</span>
+                                </div>
+                                <Plus size={14} className="text-gray-300 group-hover:text-blue-500 transition-colors" />
+                              </div>
+                            ))
+                          ) : (
+                            <div className="p-4 text-center text-xs text-gray-400 italic">Không tìm thấy sản phẩm này...</div>
+                          )}
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-between p-3 border-2 border-blue-100 bg-blue-50/50 rounded-2xl animate-in zoom-in-95 duration-200">
+                        <div className="flex items-center gap-3">
+                          <div className="w-9 h-9 rounded-xl bg-blue-600 flex items-center justify-center text-white shadow-sm">
+                            <Package size={18} />
+                          </div>
+                          <div>
+                            <p className="text-xs font-black text-blue-900">
+                              {getSelectedProductInfo?.name || "Sản phẩm đã chọn"}
+                            </p>
+                            <p className="text-[10px] font-bold text-blue-500 font-mono uppercase">
+                              Mã SP: {getSelectedProductInfo?.code || "---"}
+                            </p>
+                          </div>
+                        </div>
+                        <button 
+                          type="button"
+                          onClick={() => setTempItem({ ...tempItem, MaSP: "" })}
+                          className="w-8 h-8 flex items-center justify-center rounded-full bg-blue-100 text-blue-600 hover:bg-red-50 hover:text-red-500 transition-all shadow-sm"
+                        >
+                          <XCircle size={18} />
+                        </button>
+                      </div>
+                    )}
                   </div>
 
                   <div>
                     <label className="block text-[11px] font-bold text-gray-600 mb-1">Sơ đồ Vị trí xếp</label>
-                    <select className="w-full border border-blue-300 rounded-md p-1.5 text-xs bg-white font-bold text-blue-700" value={tempItem.MaViTriCode} onChange={(e) => setTempItem({ ...tempItem, MaViTriCode: e.target.value })}>
+                    <select className="w-full border border-gray-200 rounded-xl p-2.5 text-xs bg-white font-bold text-gray-700 focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500 transition-all" value={tempItem.MaViTriCode} onChange={(e) => setTempItem({ ...tempItem, MaViTriCode: e.target.value })}>
                       {filteredLocations.length === 0 && <option value="">❌ Kho chưa cấu hình vị trí</option>}
                       {filteredLocations.map(loc => (
                         <option key={loc.MaViTriCode || loc.mavitricode} value={loc.MaViTriCode || loc.mavitricode}>
@@ -1044,8 +1244,14 @@ const handleOpenCreate = () => {
                   <div>
                     <label className="block text-[11px] font-medium text-gray-600 mb-1">SL / Đơn giá</label>
                     <div className="flex space-x-1">
-                      <input type="number" min="1" className="w-1/2 border rounded-md p-1.5 text-sm bg-white" value={tempItem.SoLuong} onChange={(e) => setTempItem({ ...tempItem, SoLuong: e.target.value })} placeholder="SL" />
-                      <input type="number" min="0" className="w-1/2 border rounded-md p-1.5 text-sm bg-white" value={tempItem.DonGia} onChange={(e) => setTempItem({ ...tempItem, DonGia: e.target.value })} placeholder="Giá" />
+                      <input type="number" min="1" className="w-1/2 border rounded-md p-1.5 text-sm bg-white [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" value={tempItem.SoLuong} onChange={(e) => setTempItem({ ...tempItem, SoLuong: e.target.value })} placeholder="SL" />
+                      <input 
+                        type="text" 
+                        className="w-1/2 border rounded-md p-1.5 text-sm bg-white" 
+                        value={formatNumberWithDots(tempItem.DonGia)} 
+                        onChange={(e) => setTempItem({ ...tempItem, DonGia: parseNumberFromDots(e.target.value) })} 
+                        placeholder="Giá" 
+                      />
                     </div>
                   </div>
                 </div>
@@ -1090,7 +1296,7 @@ const handleOpenCreate = () => {
                           <tr key={index} className="hover:bg-gray-50 border-b">
                             <td className="p-2 border font-medium text-gray-700">{productName}</td>
                             <td className="p-2 border text-center">
-                              <select className="w-full bg-transparent border-0 font-mono text-xs font-bold text-blue-700" value={item.MaViTriCode} onChange={(e) => handleInlineChange(index, "MaViTriCode", e.target.value)}>
+                              <select className="w-full bg-white border border-gray-200 rounded-lg px-1 py-0.5 text-xs font-bold text-gray-700 focus:ring-1 focus:ring-blue-500/20 focus:border-blue-500 transition-all" value={item.MaViTriCode} onChange={(e) => handleInlineChange(index, "MaViTriCode", e.target.value)}>
                                 {filteredLocations.map((loc) => (
                                   <option key={loc.MaViTriCode || loc.mavitricode} value={loc.MaViTriCode || loc.mavitricode}>
                                     {formatLocationString(loc)}
@@ -1102,11 +1308,22 @@ const handleOpenCreate = () => {
                               <input type="date" className="border rounded px-1 py-0.5 text-[11px] w-full" value={item.NgaySanXuat || ""} onChange={(e) => handleInlineChange(index, "NgaySanXuat", e.target.value)} />
                               <input type="date" className="border border-amber-200 rounded px-1 py-0.5 text-[11px] w-full text-amber-800" value={item.HanSuDung || ""} onChange={(e) => handleInlineChange(index, "HanSuDung", e.target.value)} />
                             </td>
+                            {/* TÌM Ô SỐ LƯỢNG VÀ THAY THÀNH ĐOẠN NÀY: */}
+                          <td className="p-2 border text-center">
+                            <input 
+                              type="number" 
+                              className="w-full text-center border rounded py-0.5 [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none" 
+                              value={item.SoLuong} 
+                              onChange={(e) => handleInlineChange(index, "SoLuong", e.target.value)} 
+                            />
+                          </td>
                             <td className="p-2 border text-center">
-                              <input type="number" className="w-full text-center border rounded py-0.5" value={item.SoLuong} onChange={(e) => handleInlineChange(index, "SoLuong", e.target.value)} />
-                            </td>
-                            <td className="p-2 border text-center">
-                              <input type="number" className="w-full text-right border rounded py-0.5" value={item.DonGia} onChange={(e) => handleInlineChange(index, "DonGia", e.target.value)} />
+                              <input 
+                                type="text" 
+                                className={`w-full text-center border rounded py-0.5 ${Number(item.DonGia) <= 0 ? 'border-red-500 bg-red-50 text-red-600 font-bold' : ''}`} 
+                                value={formatNumberWithDots(item.DonGia)} 
+                                onChange={(e) => handleInlineChange(index, "DonGia", parseNumberFromDots(e.target.value))} 
+                              />
                             </td>
                             <td className="p-2 border text-right font-bold text-gray-800">{formatCurrency(item.SoLuong * item.DonGia)}</td>
                             <td className="p-2 border text-center">

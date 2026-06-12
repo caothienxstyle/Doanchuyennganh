@@ -34,6 +34,8 @@ export default function BaoHanhPage() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [checkResult, setCheckResult] = useState(null); 
+  const [warrantyStatus, setWarrantyStatus] = useState({ expired: false, label: "", expiryDate: "" });
+  const [selectedItems, setSelectedItems] = useState([]);
   const [isChecking, setIsChecking] = useState(false);
   const [serialInput, setSerialInput] = useState(""); 
   
@@ -64,11 +66,13 @@ export default function BaoHanhPage() {
     MaNCC: "1",
     MaViTri: "",
     MaPhieu: "",
+    MaPhieuXuat: null,
+    MaPhieuNhap: null,
     TinhTrangLoi: "",
     LoaiBaoHanh: "Sửa chữa",
     TrangThai: "ChoBaoHanh",
-    SoLuong: 1, // 🌟 Bổ sung: Mặc định số lượng là 1 khi tiếp nhận mới
-    HanBaoHanhNCC: null // Lưu trữ hạn bảo hành từ NCC để đối soát
+    SoLuong: 1,
+    HanBaoHanhNCC: null
   });
 
   const getToken = () => localStorage.getItem("token") || localStorage.getItem("accessToken") || "";
@@ -211,25 +215,37 @@ export default function BaoHanhPage() {
       setCheckResult(null);
       // 🌟 Cập nhật Endpoint tra cứu mới theo tài liệu BE
       const res = await axios.get(`http://localhost:3000/baohanh/kiemtra?search=${searchQuery}`, { headers });
-      if (res.data.success && res.data.data) {
-        const info = res.data.data;
+      const info = res.data?.data || res.data || {};
+      if (info && Object.keys(info).length > 0) {
         setCheckResult(info);
-        
-        // 🌟 FIX LỖI 1: Bóc tách MaSanPham kỹ hơn để tránh lỗi rỗng khi submit
+        setSelectedItems([]);
+        setSerialInput("");
+
+        const expiryDate = info.HanBaoHanh || info.HanBaoHanhNCC || info.HanBaoHanhKhach || null;
+        const isExpired = expiryDate ? new Date(expiryDate).setHours(0, 0, 0, 0) < new Date().setHours(0, 0, 0, 0) : false;
+
+        setWarrantyStatus({
+          expired: isExpired,
+          label: isExpired ? "Hết hạn bảo hành" : "Còn hạn bảo hành",
+          expiryDate
+        });
+
         const productId = info.MaSanPham || info.idSanPham || info.id || "";
 
         setNewBaoHanh(prev => ({
           ...prev,
-          MaPhieu: info.MaPhieu, // Đây là mã hiển thị (VD: PX123)
-          MaPhieuXuat: info.MaPhieuXuat || null,
-          MaPhieuNhap: info.MaPhieuNhap || null,
+          MaPhieu: info.MaPhieu || info.MaPhieuGoc || info.MaPhieuXuat || info.MaPhieuNhap || prev.MaPhieu,
+          MaPhieuXuat: info.MaPhieuXuat || info.MaPhieuXuatHienThi || null,
+          MaPhieuNhap: info.MaPhieuNhap || info.MaPhieuNhapHienThi || null,
           MaSanPham: productId || prev.MaSanPham,
-          HanBaoHanhNCC: info.DoiSoatNhaCungCap?.HanBaoHanhNCC || null
+          SoLuong: Number(info.SoLuong || prev.SoLuong || 1),
+          HanBaoHanhNCC: expiryDate || null
         }));
       } else {
         alert("Không tìm thấy thông tin bảo hành cho mã này.");
       }
     } catch (err) {
+      setWarrantyStatus({ expired: false, label: "", expiryDate: "" });
       alert("Lỗi kiểm tra: " + (err.response?.data?.message || "Không tìm thấy dữ liệu"));
     } finally {
       setIsChecking(false);
@@ -242,16 +258,20 @@ export default function BaoHanhPage() {
       return alert("Lỗi: Không xác định được ID sản phẩm. Vui lòng kiểm tra lại bước 1.");
     }
 
+    const soLuong = Number(newBaoHanh.SoLuong || 1);
+    if (!Number.isFinite(soLuong) || soLuong < 1) {
+      return alert("Vui lòng nhập số lượng lỗi hợp lệ (tối thiểu 1). ");
+    }
+
     try {
       const danhSachSerial = serialInput.split("\n").map(s => s.trim()).filter(s => s !== "");
-      
       const payload = {
         ...newBaoHanh,
         MaKho: Number(newBaoHanh.MaKho || 1),
         MaViTri: newBaoHanh.MaViTri ? Number(newBaoHanh.MaViTri) : undefined,
         MaPhieuXuat: newBaoHanh.MaPhieuXuat ? Number(newBaoHanh.MaPhieuXuat) : undefined,
         MaPhieuNhap: newBaoHanh.MaPhieuNhap ? Number(newBaoHanh.MaPhieuNhap) : undefined,
-        SoLuong: Number(newBaoHanh.SoLuong || 1),
+        SoLuong: soLuong,
         // 🌟 Bổ sung trường HanBaoHanh (hạn NCC) theo tài liệu BE
         HanBaoHanh: newBaoHanh.HanBaoHanhNCC,
         DanhSachSerial: danhSachSerial
@@ -270,6 +290,7 @@ export default function BaoHanhPage() {
   const handleCloseCreateModal = () => {
     setIsCreateModalOpen(false);
     setCheckResult(null);
+    setSelectedItems([]);
     setSearchQuery("");
     setSerialInput("");
     setNewBaoHanh({
@@ -278,14 +299,45 @@ export default function BaoHanhPage() {
       MaNCC: "1",
       MaViTri: "",
       MaPhieu: "",
+      MaPhieuXuat: null,
+      MaPhieuNhap: null,
       TinhTrangLoi: "",
       LoaiBaoHanh: "Sửa chữa",
       TrangThai: "ChoBaoHanh",
-      SoLuong: 1
+      SoLuong: 1,
+      HanBaoHanhNCC: null
     });
   };
 
   // 🌟 Hàm tải chi tiết sản phẩm của một phiếu khi nhấn nút Xem (Có logic dự phòng)
+  const selectableItems = useMemo(() => {
+    const raw = checkResult?.ChiTiet || checkResult?.chiTiet || checkResult?.DanhSachSanPham || checkResult?.DanhSach || checkResult?.items || [];
+
+    return (Array.isArray(raw) ? raw : []).map((item, index) => {
+      const id = String(item.MaBaoHanh || item.id || item.MaSanPham || item.MaSP || `${item.SoSerial || item.SoLo || "item"}-${index}`);
+      return {
+        id,
+        label: item.TenSanPham || item.tenSanPham || item.TenSP || item.name || `Sản phẩm ${index + 1}`,
+        serial: item.SoSerial || item.serial || item.SoLo || item.lot || "",
+        quantity: Number(item.SoLuong || item.quantity || 1),
+        maSanPham: item.MaSanPham || item.MaSP || item.id || "",
+      };
+    });
+  }, [checkResult]);
+
+  const toggleSelectedItem = (itemId) => {
+    setSelectedItems((prev) => {
+      const next = prev.includes(itemId) ? prev.filter((id) => id !== itemId) : [...prev, itemId];
+      const chosen = selectableItems.filter((item) => next.includes(item.id));
+      setSerialInput(chosen.map((item) => item.serial).filter(Boolean).join("\n"));
+      setNewBaoHanh((prevState) => ({
+        ...prevState,
+        SoLuong: chosen.length > 0 ? chosen.reduce((sum, item) => sum + Number(item.quantity || 1), 0) : prevState.SoLuong,
+      }));
+      return next;
+    });
+  };
+
   const handleOpenSlipDetail = async (slip) => {
     setSelectedSlipGroup(slip);
     setIsItemsModalOpen(true);
@@ -429,6 +481,45 @@ export default function BaoHanhPage() {
     return result;
   }, [danhSachPhieu, activeTab, searchTerm, activeKpiFilter]);
 
+  const filteredByTab = useMemo(() => {
+    return danhSachPhieu.filter((p) => activeTab === "EXPORT" ? p.LoaiPhieuBH === "KHACH_HANG" : p.LoaiPhieuBH === "NHA_CUNG_CAP");
+  }, [danhSachPhieu, activeTab]);
+
+  const kpiCards = useMemo(() => {
+    const sumQty = (list) => list.reduce((sum, item) => sum + Number(item.SoLuong || item.TongSoLuong || 0), 0);
+
+    return [
+      {
+        key: "new",
+        label: "Mới (Số máy)",
+        value: sumQty(filteredByTab.filter((p) => p.TrangThai === "ChoBaoHanh")),
+        tone: "blue",
+        icon: Users,
+      },
+      {
+        key: "processing",
+        label: "Đang xử lý",
+        value: sumQty(filteredByTab.filter((p) => p.TrangThai === "DangBaoHanh")),
+        tone: "amber",
+        icon: Clock,
+      },
+      {
+        key: "packing",
+        label: "Đang gom hàng",
+        value: sumQty(filteredByTab.filter((p) => p.TrangThai === "GomHang")),
+        tone: "purple",
+        icon: Archive,
+      },
+      {
+        key: "expired",
+        label: "Hết hạn NCC",
+        value: sumQty(filteredByTab.filter((p) => p.HanBaoHanh_NCC && new Date(p.HanBaoHanh_NCC) < new Date())),
+        tone: "red",
+        icon: AlertTriangle,
+      },
+    ];
+  }, [filteredByTab]);
+
   // Cấu hình cột cho bảng Hồ sơ (Slips)
   const slipColumns = [
     { 
@@ -454,12 +545,6 @@ export default function BaoHanhPage() {
     { 
       key: "SoLuong", 
       label: "Số lượng", 
-      render: (v) => (
-        <div className="flex flex-col">
-          <span className="font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded-lg w-fit text-[11px]">{v} máy</span>
-          <span className="text-[10px] text-gray-400">Tổng máy lỗi</span>
-        </div>
-      ) 
     },
     { key: "NgayLap", label: "Ngày lập hồ sơ", render: (v) => <span className="text-gray-500">{formatDate(v)}</span> },
     { 
@@ -501,11 +586,10 @@ export default function BaoHanhPage() {
       )
     },
     { key: "MaBaoHanh", label: "Mã BH", render: (v) => <span className="font-mono font-bold text-gray-400">#{v}</span> },
-    { key: "ProductInfo", label: "Thông tin Sản phẩm", render: (_, row) => (
-      <div className="min-w-[200px]">
+    { key: "ProductInfo", label: "Thông tin Sản phẩm", className: "min-w-[240px] align-top", headerClassName: "min-w-[240px]", render: (_, row) => (
+      <div className="min-w-[220px] max-w-[260px]">
         <p className="font-bold text-gray-800 text-xs truncate" title={row.TenSanPham}>{row.TenSanPham || "N/A"}</p>
         <p className="text-[10px] text-gray-400">Mã SP: {row.MaSP || row.MaSanPham}</p>
-        <p className="text-[10px] font-mono text-blue-600 font-bold">Serial: {row.SoSerial || "N/A"}</p>
       </div>
     )},
     { 
@@ -524,7 +608,7 @@ export default function BaoHanhPage() {
         </div>
       )
     },
-    { key: "SoLuong", label: "Số lượng", render: (v) => <span className="font-bold text-gray-700">{v} máy</span> }, // 🌟 Bổ sung cột SL
+    { key: "SoLuong", label: "Số lượng", className: "min-w-[110px] align-top", render: (v) => <span className="font-bold text-gray-700">{v} sản phẩm</span> },
     { 
       key: "HanBaoHanh", 
       label: "Hạn BH Khách", 
@@ -534,8 +618,8 @@ export default function BaoHanhPage() {
         return <span className={`text-xs font-bold ${isExpired ? "text-red-500 bg-red-50 px-2 py-0.5 rounded" : "text-gray-700"}`}>{formatDate(dateVal)}</span>;
       }
     },
-    { key: "TinhTrangLoi", label: "Lỗi Thực Tế", render: (v) => <p className="text-xs max-w-[150px] truncate italic text-gray-500" title={v}>{v || "Chưa nhập"}</p> },
-    { key: "LoaiBaoHanh", label: "Loại BH", render: (v) => <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded uppercase">{v}</span> },
+    { key: "TinhTrangLoi", label: "Lỗi Thực Tế", className: "min-w-[180px] align-top", render: (v) => <p className="text-xs leading-5 text-gray-500 italic" title={v}>{v || "Chưa nhập"}</p> },
+    { key: "LoaiBaoHanh", label: "Loại BH", render: (v) => <span className="text-[10px] font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded uppercase whitespace-nowrap">{v}</span> },
     { key: "TrangThai", label: "Trạng thái xử lý", render: (v) => renderStatusTag(v) },
     { 
       key: "actions", 
@@ -573,8 +657,8 @@ export default function BaoHanhPage() {
       )
     },
     { key: "MaBaoHanh", label: "Mã Ký Gửi", render: (v) => <span className="font-mono font-bold text-gray-400">#{v}</span> },
-    { key: "ProductInfo", label: "Sản phẩm & Serial", render: (_, row) => (
-      <div className="min-w-[150px]">
+    { key: "ProductInfo", label: "Sản phẩm & Serial", className: "min-w-[220px] align-top", headerClassName: "min-w-[220px]", render: (_, row) => (
+      <div className="min-w-[200px] max-w-[260px]">
         <p className="font-bold text-gray-800 text-xs">{row.TenSanPham}</p>
         <p className="text-[10px] font-mono text-indigo-600">SN: {row.SoSerial}</p>
       </div>
@@ -595,7 +679,7 @@ export default function BaoHanhPage() {
         </div>
       )
     },
-    { key: "SoLuong", label: "Số lượng", render: (v) => <span className="font-bold text-gray-700">{v} máy</span> }, // 🌟 Bổ sung cột SL
+    { key: "SoLuong", label: "Số lượng", className: "min-w-[110px] align-top", render: (v) => <span className="font-bold text-gray-700">{v} máy</span> },
     { key: "SoLo", label: "Số Lô (Lot)", render: (v) => <span className="text-[10px] font-mono font-bold text-amber-700 bg-amber-50 px-2 py-0.5 rounded border border-amber-100">{v || "N/A"}</span> },
     { 
       key: "HanBaoHanh", 
@@ -610,6 +694,7 @@ export default function BaoHanhPage() {
     { 
       key: "Timeline", 
       label: "Tiến độ Hãng", 
+      className: "min-w-[180px] align-top",
       render: (_, row) => (
         <div className="text-[10px] space-y-0.5">
           <p><span className="text-gray-400">Gửi:</span> {formatDate(row.NgayGuiNCC)}</p>
@@ -630,14 +715,14 @@ export default function BaoHanhPage() {
 
   const renderStatusTag = (status) => {
     const config = {
-      ChoBaoHanh: "bg-orange-50 text-orange-600 border-orange-200",
+      ChoBaoHanh: "bg-orange-100 text-orange-600 border-orange-200",
       DangBaoHanh: "bg-blue-50 text-blue-600 border-blue-200", 
       DaBaoHanh: "bg-green-50 text-green-600 border-green-200",   
       TuChoiBaoHanh: "bg-red-50 text-red-600 border-red-200", 
     };
     const labels = { ChoBaoHanh: "Chờ bảo hành", DangBaoHanh: "Đang bảo hành", DaBaoHanh: "Đã bảo hành", TuChoiBaoHanh: "Từ chối BH" };
     return (
-      <span className={`px-2.5 py-1 text-xs font-bold border rounded-full ${config[status] || "bg-gray-50 text-gray-600"}`}>
+      <span className={`px-2.5 py-1 text-xs font-bold border rounded-full whitespace-nowrap ${config[status] || "bg-gray-50 text-gray-600"}`}>
         {labels[status] || status}
       </span>
     );
@@ -675,33 +760,37 @@ export default function BaoHanhPage() {
         </div>
 
         {/* KPI STATS CARDS */}
-        {/* Cập nhật logic lọc số lượng máy lỗi theo Tab Xuất/Nhập hiện tại */}
-        {(() => {
-          const filteredByTab = danhSachPhieu.filter(p => activeTab === "EXPORT" ? p.LoaiPhieuBH === "KHACH_HANG" : p.LoaiPhieuBH === "NHA_CUNG_CAP");
-          const sumQty = (list) => list.reduce((sum, p) => sum + (p.SoLuong || p.TongSoLuong || 0), 0);
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {kpiCards.map((card) => {
+            const Icon = card.icon;
+            const toneClass = {
+              blue: "bg-blue-50 text-blue-600",
+              amber: "bg-amber-50 text-amber-600",
+              purple: "bg-purple-50 text-purple-600",
+              red: "bg-red-50 text-red-600",
+            }[card.tone];
+            const valueClass = {
+              blue: "text-gray-800",
+              amber: "text-amber-600",
+              purple: "text-purple-600",
+              red: "text-red-600",
+            }[card.tone];
 
-          return (
-        <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
-          <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-xs flex items-center gap-4">
-            <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600"><Users size={20}/></div>
-            {/* Đổi từ đếm số phiếu sang cộng tổng số lượng máy để tránh sai lệch số liệu */}
-            <div><p className="text-[10px] font-bold text-gray-400 uppercase">Mới (Số máy)</p><h3 className="text-xl font-bold text-gray-800">{sumQty(filteredByTab.filter(p => p.TrangThai === "ChoBaoHanh"))}</h3></div>
-          </div>
-          <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-xs flex items-center gap-4">
-            <div className="w-10 h-10 rounded-xl bg-amber-50 flex items-center justify-center text-amber-600"><Clock size={20}/></div>
-            <div><p className="text-[10px] font-bold text-gray-400 uppercase">Đang xử lý</p><h3 className="text-xl font-bold text-amber-600">{sumQty(filteredByTab.filter(p => p.TrangThai === "DangBaoHanh"))}</h3></div>
-          </div>
-          <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-xs flex items-center gap-4">
-            <div className="w-10 h-10 rounded-xl bg-purple-50 flex items-center justify-center text-purple-600"><Archive size={20}/></div>
-            <div><p className="text-[10px] font-bold text-gray-400 uppercase">Đang gom hàng</p><h3 className="text-xl font-bold text-purple-600">{sumQty(filteredByTab.filter(p => p.TrangThai === "GomHang"))}</h3></div>
-          </div>
-          <div className="bg-white p-4 rounded-2xl border border-gray-100 shadow-xs flex items-center gap-4">
-            <div className="w-10 h-10 rounded-xl bg-red-50 flex items-center justify-center text-red-600"><AlertTriangle size={20}/></div>
-            <div><p className="text-[10px] font-bold text-gray-400 uppercase">Hết hạn NCC</p><h3 className="text-xl font-bold text-red-600">{sumQty(filteredByTab.filter(p => p.HanBaoHanh_NCC && new Date(p.HanBaoHanh_NCC) < new Date()))}</h3></div>
-          </div>
+            return (
+              <article key={card.key} className="rounded-2xl border border-gray-100 bg-white p-4 shadow-xs transition hover:-translate-y-0.5 hover:shadow-sm">
+                <div className="flex items-center gap-4">
+                  <div className={`flex h-10 w-10 items-center justify-center rounded-xl ${toneClass}`}>
+                    <Icon size={20} />
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-gray-400">{card.label}</p>
+                    <h3 className={`text-xl font-bold ${valueClass}`}>{card.value}</h3>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
         </div>
-          );
-        })()}
 
         {/* NAVIGATION TABS */}
         <div className="flex border-b border-gray-200 bg-white p-2 rounded-xl shadow-xs gap-2">
@@ -925,16 +1014,16 @@ export default function BaoHanhPage() {
           <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-xs">
             <div className="bg-white rounded-2xl w-full max-w-2xl p-6 shadow-2xl mx-4 max-h-[90vh] overflow-y-auto">
               <div className="flex justify-between items-center mb-4">
-                <h3 className="text-lg font-bold text-gray-800">🆕 Tiếp nhận máy lỗi bảo hành</h3>
+                <h3 className="text-lg font-bold text-gray-800">🆕 Tiếp nhận từ Khách</h3>
                 <button onClick={handleCloseCreateModal} className="text-gray-400 hover:text-gray-600 text-2xl font-light">&times;</button>
               </div>
               
               <div className="bg-blue-50 p-4 rounded-xl border border-blue-100 mb-6">
-                <label className="block text-xs font-bold text-blue-700 mb-2 uppercase">Bước 1: Kiểm tra bảo hành gốc</label>
+                <label className="block text-xs font-bold text-blue-700 mb-2 uppercase">Bước 1: Tra cứu chứng từ gốc</label>
                 <div className="flex gap-2">
                   <input 
                     type="text" 
-                    placeholder="Nhập Mã Phiếu Xuất hoặc Số Serial để check..."
+                    placeholder="Nhập mã PX / PN hoặc số serial để tra cứu..."
                     className="flex-1 px-4 py-2 rounded-lg border border-blue-200 text-sm outline-none focus:border-blue-500"
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
@@ -951,45 +1040,67 @@ export default function BaoHanhPage() {
 
                 {checkResult && (
                   <div className="mt-4 space-y-4 animate-fade-in">
-                    <div className="p-3 bg-white rounded-xl border border-blue-100 shadow-sm flex items-center justify-between">
-                      <div>
-                         <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Sản phẩm phát hiện</p>
-                         <h4 className="text-sm font-bold text-gray-800">{checkResult.TenSanPham}</h4>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="p-3 bg-white rounded-xl border border-blue-100 shadow-sm">
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Sản phẩm phát hiện</p>
+                        <h4 className="mt-1 text-sm font-bold text-gray-800">{checkResult.TenSanPham || "—"}</h4>
+                        <p className="mt-1 text-[11px] text-gray-500">Mã chứng từ gốc: <span className="font-semibold text-gray-700">{checkResult.MaPhieu || checkResult.MaPhieuGoc || "—"}</span></p>
                       </div>
-                      <div className="text-right">
-                         <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Định danh</p>
-                         <p className="text-xs font-mono font-bold text-blue-600">{checkResult.SoSerial || checkResult.SoLo}</p>
+                      <div className="p-3 bg-white rounded-xl border border-blue-100 shadow-sm">
+                        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest">Định danh / số lượng</p>
+                        <h4 className="mt-1 text-sm font-bold text-blue-600">{checkResult.SoSerial || checkResult.SoLo || "—"}</h4>
+                        <p className="mt-1 text-[11px] text-gray-500">Số lượng lỗi: <span className="font-semibold text-gray-700">{checkResult.SoLuong || newBaoHanh.SoLuong || 1}</span></p>
                       </div>
                     </div>
 
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {/*  Khối 1: THÔNG TIN BẢO HÀNH KHÁCH HÀNG */}
-                      <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-xs">
-                        <h5 className="text-xs font-bold text-gray-700 mb-3 flex items-center gap-2"><User size={14} className="text-blue-500"/> BẢO HÀNH KHÁCH HÀNG</h5>
-                        <div className="space-y-2 text-xs">
-                          <p className="flex justify-between"><span className="text-gray-500">Khách hàng:</span> <span className="font-bold text-gray-800">{checkResult.BaoHanhKhachHang.KhachHang}</span></p>
-                          <p className="flex justify-between"><span className="text-gray-500">Số điện thoại:</span> <span className="font-medium">{checkResult.BaoHanhKhachHang.DienThoai}</span></p>
-                          <p className="flex justify-between"><span className="text-gray-500">Ngày mua:</span> <span className="font-medium">{new Date(checkResult.BaoHanhKhachHang.NgayMuaKho).toLocaleDateString("vi-VN")}</span></p>
-                          <div className="pt-2 border-t mt-2">
-                            <span className={`px-2 py-1 rounded-md font-bold text-[10px] uppercase border ${checkResult.BaoHanhKhachHang.TrangThai.includes("Còn bảo hành") ? "bg-green-50 text-green-700 border-green-200" : "bg-red-50 text-red-700 border-red-200"}`}>
-                              {checkResult.BaoHanhKhachHang.TrangThai}
-                            </span>
+                    {selectableItems.length > 0 && (
+                      <div className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
+                        <div className="mb-3 flex items-center justify-between gap-2">
+                          <div>
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400">Chọn sản phẩm lỗi</p>
+                            <p className="text-[11px] text-gray-500">Tick những thiết bị cần tiếp nhận từ phiếu tra cứu.</p>
                           </div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const allIds = selectableItems.map((item) => item.id);
+                              setSelectedItems(allIds);
+                              setSerialInput(selectableItems.map((item) => item.serial).filter(Boolean).join("\n"));
+                              setNewBaoHanh((prev) => ({ ...prev, SoLuong: selectableItems.reduce((sum, item) => sum + Number(item.quantity || 1), 0) }));
+                            }}
+                            className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-1 text-[10px] font-bold text-blue-700 hover:bg-blue-100"
+                          >
+                            Chọn tất cả
+                          </button>
+                        </div>
+                        <div className="space-y-2">
+                          {selectableItems.map((item) => (
+                            <label key={item.id} className="flex cursor-pointer items-start gap-3 rounded-xl border border-gray-100 bg-gray-50 p-3 hover:bg-gray-100">
+                              <input
+                                type="checkbox"
+                                checked={selectedItems.includes(item.id)}
+                                onChange={() => toggleSelectedItem(item.id)}
+                                className="mt-1 h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                              />
+                              <span className="flex-1">
+                                <span className="block text-xs font-semibold text-gray-800">{item.label}</span>
+                                <span className="block text-[11px] text-gray-500">Serial / lô: {item.serial || "—"} • SL: {item.quantity}</span>
+                              </span>
+                            </label>
+                          ))}
                         </div>
                       </div>
+                    )}
 
-                      {/* Khối 2: ĐỐI SOÁT VỚI NHÀ CUNG CẤP */}
-                      <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-xs">
-                        <h5 className="text-xs font-bold text-gray-700 mb-3 flex items-center gap-2"><ShieldAlert size={14} className="text-orange-500"/> ĐỐI SOÁT NHÀ CUNG CẤP</h5>
-                        <div className="space-y-2 text-xs">
-                          <p className="flex justify-between"><span className="text-gray-500">Ngày nhập kho:</span> <span className="font-medium">{new Date(checkResult.DoiSoatNhaCungCap.NgayNhapKho).toLocaleDateString("vi-VN")}</span></p>
-                          <p className="flex justify-between"><span className="text-gray-500">Hạn BH của NCC:</span> <span className="font-bold text-gray-800">{new Date(checkResult.DoiSoatNhaCungCap.HanBaoHanhNCC).toLocaleDateString("vi-VN")}</span></p>
-                          <div className="pt-2 border-t mt-2">
-                            <span className={`px-2 py-1 rounded-md font-bold text-[10px] uppercase border ${checkResult.DoiSoatNhaCungCap.TrangThaiDoiSoat.includes("⚠️ NCC ĐÃ HẾT HẠN!") ? "bg-red-600 text-white border-red-700 animate-pulse" : "bg-blue-50 text-blue-700 border-blue-200"}`}>
-                              {checkResult.DoiSoatNhaCungCap.TrangThaiDoiSoat}
-                            </span>
-                          </div>
-                        </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className={`rounded-xl border p-3 text-[11px] ${warrantyStatus.expired ? "border-red-200 bg-red-50 text-red-700" : "border-emerald-200 bg-emerald-50 text-emerald-700"}`}>
+                        <p className="font-bold uppercase tracking-widest">Trạng thái bảo hành</p>
+                        <p className="mt-1 text-sm font-semibold">{warrantyStatus.label || (warrantyStatus.expired ? "Hết hạn bảo hành" : "Còn hạn bảo hành")}</p>
+                        <p className="mt-1">{warrantyStatus.expiryDate ? `Hạn bảo hành: ${formatDate(warrantyStatus.expiryDate)}` : "Không có dữ liệu hạn bảo hành"}</p>
+                      </div>
+                      <div className="rounded-xl border border-blue-100 bg-blue-50 p-3 text-[11px] text-blue-700">
+                        <p className="font-bold uppercase tracking-widest">Luồng tiếp nhận</p>
+                        <p className="mt-1">{warrantyStatus.expired ? "Phiếu này đã hết hạn, hệ thống sẽ chặn bước tiếp nhận để tránh tạo hồ sơ sai." : "Phiếu còn hạn, bạn có thể tiếp tục nhập kho và tạo hồ sơ tiếp nhận."}</p>
                       </div>
                     </div>
                   </div>
@@ -1056,7 +1167,6 @@ export default function BaoHanhPage() {
                             className="w-full text-sm border rounded-xl p-2.5 font-mono bg-gray-50 focus:bg-white outline-none focus:border-blue-500"
                             value={serialInput}
                             onChange={(e) => setSerialInput(e.target.value)}
-                            required
                           />
                         </div>
                       </div>
@@ -1081,8 +1191,9 @@ export default function BaoHanhPage() {
                     >Hủy</button>
                     <button 
                       type="submit"
-                      className="px-6 py-2 text-xs font-bold text-white bg-blue-600 rounded-xl hover:bg-blue-700 shadow-md"
-                    >Xác nhận tiếp nhận</button>
+                      disabled={warrantyStatus.expired}
+                      className="px-6 py-2 text-xs font-bold text-white bg-blue-600 rounded-xl hover:bg-blue-700 shadow-md disabled:cursor-not-allowed disabled:bg-gray-300"
+                    >{warrantyStatus.expired ? "Không thể tiếp nhận" : "Xác nhận tiếp nhận"}</button>
                   </div>
                 </form>
               )}

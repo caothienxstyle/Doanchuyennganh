@@ -24,4 +24,16 @@ yarn-error.log*
 Thumbs.db
 
 # IDE
-.vscod
+.vscode/
+.idea/
+
+# coverage
+coverage/
+
+# cache
+.cache/
+.parcel-cache/
+
+# React / Next
+.next/
+out/

@@ -68,17 +68,21 @@ export default function AppRoutes() {
       <Route path="/imports" element={<ProtectedPage allowedRoles={staffAndManager}><ImportPage /></ProtectedPage>} />
       <Route path="/exports" element={<ProtectedPage allowedRoles={staffAndManager}><ExportPage /></ProtectedPage>} />
       <Route path="/incidents" element={<ProtectedPage allowedRoles={staffAndManager}><IncidentPage /></ProtectedPage>} />
-      <Route path="/logs" element={<ProtectedPage allowedRoles={[ROLES.manager, ROLES.admin]}><ActivityLogPage /></ProtectedPage>} />
+      <Route path="/logs" element={<ProtectedPage allowedRoles={adminOnly}><ActivityLogPage /></ProtectedPage>} />
       <Route path="/users" element={<ProtectedPage allowedRoles={managerAndAdmin}><UserPage /></ProtectedPage>} />
       <Route path="/categories" element={<ProtectedPage allowedRoles={allRoles}><CategoryPage /></ProtectedPage>} />
 
         <Route
           path="/customers"
-          element={<CustomerPage />}
+          element={
+            <ProtectedPage allowedRoles={managerOnly}>
+              <CustomerPage />
+            </ProtectedPage>
+          }
         />
       <Route
         path="/Kho"
-        element={<KhoPage />  }
+        element={<ProtectedPage allowedRoles={staffAndManager}><KhoPage /></ProtectedPage> }
       />
       <Route
         path="/search"
@@ -90,12 +94,11 @@ export default function AppRoutes() {
       />
       <Route
         path="/baohanh"
-        element={<BaoHanhPage />
-        }
+        element={<ProtectedPage allowedRoles={staffAndManager}><BaoHanhPage /></ProtectedPage>}
       />
       <Route
         path="/PhieuBaoHanh"
-        element={<PhieubaohanhPage />  }
+        element={<ProtectedPage allowedRoles={staffAndManager}><PhieubaohanhPage /></ProtectedPage> }
       />
       <Route
         path="/approvals"
@@ -107,16 +110,26 @@ export default function AppRoutes() {
       />
       <Route
         path="/reports"
-        element={<ReportsPage/>}
+        element={
+          <ProtectedPage allowedRoles={staffAndManager}>
+            <ReportsPage/>
+          </ProtectedPage>
+        }
       />
       <Route
         path="/NCC"
-        element={<NhaCungCapPage/>
+        element={
+          <ProtectedPage allowedRoles={managerOnly}>
+            <NhaCungCapPage/>
+          </ProtectedPage>
         }
       />
       <Route
         path="/roles"
-        element={ <RolePage />
+        element={ 
+          <ProtectedPage allowedRoles={adminOnly}>
+            <RolePage />
+          </ProtectedPage>
         }
       />
       <Route
@@ -130,7 +143,11 @@ export default function AppRoutes() {
 
         <Route
           path="/profile"
-          element={<ProfilePage />}
+          element={
+            <ProtectedPage allowedRoles={allRoles}>
+              <ProfilePage />
+            </ProtectedPage>
+          }
         />
 
         <Route

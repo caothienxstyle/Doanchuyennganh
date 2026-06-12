@@ -1,10 +1,13 @@
 import { useState, useEffect, useMemo } from "react";
 import MainLayout from "../layouts/MainLayout";
 import DataTable from "../components/DataTable";
-import { ROLES } from "../services/auth";
+import { getCurrentRole, ROLES } from "../services/auth";
 import { Search, Warehouse, MapPin, CheckCircle2, FilePlus, Loader2 } from "lucide-react";
 
 const KhoPage = () => {
+  const role = getCurrentRole() || ROLES.staff;
+  const canManageKho = role === ROLES.manager || role === ROLES.admin;
+
   // Tab hiện tại: "KHO" hoặc "VITRI" giống cấu trúc ApprovePage
   const [activeTab, setActiveTab] = useState("KHO");
 
@@ -316,7 +319,7 @@ const KhoPage = () => {
   ];
 
   return (
-    <MainLayout role={ROLES.manager}>
+    <MainLayout role={role}>
       
       {/* HEADER SECTION */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">

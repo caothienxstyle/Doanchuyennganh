@@ -2,8 +2,27 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Eye, EyeOff } from "lucide-react";
 import MainLayout from "../layouts/MainLayout";
+import { uploadAvatar } from "../services/profileService";
+import { normalizeUserSession, getCurrentRole } from "../services/auth";
 
 const SERVER_URL = "http://localhost:3000";
+
+function getAvatarUrl(path, cacheKey = Date.now()) {
+  if (!path) return "";
+
+  const normalizedPath = String(path);
+
+  if (/^data:/i.test(normalizedPath)) {
+    return normalizedPath;
+  }
+
+  if (/^https?:\/\//i.test(normalizedPath)) {
+    return `${normalizedPath}${normalizedPath.includes("?") ? "&" : "?"}v=${cacheKey}`;
+  }
+
+  const baseUrl = `${SERVER_URL}${normalizedPath.startsWith("/") ? "" : "/"}${normalizedPath}`;
+  return `${baseUrl}${baseUrl.includes("?") ? "&" : "?"}v=${cacheKey}`;
+}
 
 export default function ProfilePage() {
   const navigate = useNavigate();
@@ -24,13 +43,17 @@ export default function ProfilePage() {
   const [showNewPassword, setShowNewPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [zoomedImage, setZoomedImage] = useState(null);
+  const [selectedImageFile, setSelectedImageFile] = useState(null);
+  const [cropPosition, setCropPosition] = useState({ x: 50, y: 50 });
+  const [zoom, setZoom] = useState(1);
+  const [isUploading, setIsUploading] = useState(false);
 
   useEffect(() => {
     // 1. Lấy dữ liệu tạm từ localStorage để hiển thị ngay lập tức (tránh UI bị trễ)
     const savedUser = localStorage.getItem("user");
     if (savedUser) {
       try {
-        setUser(JSON.parse(savedUser));
+        setUser(normalizeUserSession(JSON.parse(savedUser)));
       } catch (e) {
         console.error("Dữ liệu lưu trữ local không hợp lệ:", e);
       }
@@ -60,10 +83,10 @@ export default function ProfilePage() {
       // Đồng bộ theo cấu trúc: data.success và data.user từ BE trả về
       if (data.success && data.user) {
         // 🛡️ BỔ SUNG QUAN TRỌNG: Ánh xạ TenVaiTro sang role để không bị đá ra Login
-        const updatedUser = {
+        const updatedUser = normalizeUserSession({
           ...data.user,
-          role: data.user.role || data.user.TenVaiTro 
-        };
+          role: data.user.role || data.user.TenVaiTro,
+        });
         setUser(updatedUser);
         localStorage.setItem("user", JSON.stringify(updatedUser));
       } else {
@@ -80,6 +103,105 @@ export default function ProfilePage() {
   function handleLogout() {
     localStorage.clear(); // Xóa sạch token khi đăng xuất
     navigate("/login");
+  }
+
+  const handleImageChange = (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      setSelectedImageFile(file);
+      setCropPosition({ x: 50, y: 50 });
+      setZoom(1);
+    }
+  };
+
+  function createCroppedAvatarFile(file, position, scale) {
+    return new Promise((resolve, reject) => {
+      const imageUrl = URL.createObjectURL(file);
+      const image = new Image();
+
+      image.onload = () => {
+        try {
+          const canvas = document.createElement("canvas");
+          const size = 1024;
+          canvas.width = size;
+          canvas.height = size;
+
+          const ctx = canvas.getContext("2d");
+          if (!ctx) {
+            URL.revokeObjectURL(imageUrl);
+            reject(new Error("Không tạo được canvas xử lý ảnh."));
+            return;
+          }
+
+          const cropSize = Math.min(image.naturalWidth, image.naturalHeight) / scale;
+          const sourceX = (image.naturalWidth - cropSize) * (position.x / 100);
+          const sourceY = (image.naturalHeight - cropSize) * (position.y / 100);
+
+          ctx.clearRect(0, 0, size, size);
+          ctx.imageSmoothingEnabled = true;
+          ctx.imageSmoothingQuality = "high";
+          ctx.drawImage(image, sourceX, sourceY, cropSize, cropSize, 0, 0, size, size);
+
+          canvas.toBlob((blob) => {
+            URL.revokeObjectURL(imageUrl);
+            if (!blob) {
+              reject(new Error("Không tạo được ảnh đã cắt."));
+              return;
+            }
+
+            const croppedFile = new File([blob], file.name || "avatar.png", {
+              type: blob.type || "image/jpeg",
+              lastModified: Date.now(),
+            });
+
+            resolve(croppedFile);
+          }, file.type || "image/jpeg", 0.92);
+        } catch (error) {
+          URL.revokeObjectURL(imageUrl);
+          reject(error);
+        }
+      };
+
+      image.onerror = () => {
+        URL.revokeObjectURL(imageUrl);
+        reject(new Error("Không đọc được ảnh đã chọn."));
+      };
+
+      image.src = imageUrl;
+    });
+  }
+
+  async function handleUploadAvatar() {
+    if (!selectedImageFile) {
+      alert("Vui lòng chọn ảnh trước khi tải lên.");
+      return;
+    }
+
+    try {
+      setIsUploading(true);
+      const croppedFile = await createCroppedAvatarFile(selectedImageFile, cropPosition, zoom);
+      const res = await uploadAvatar(croppedFile);
+      if (res?.success) {
+        const newAvatarPath = res.imageUrl || res.data?.AnhDaiDien || res.data?.avatar || user?.AnhDaiDien || user?.avatar || user?.image || "";
+        const updatedUser = {
+          ...user,
+          AnhDaiDien: newAvatarPath || user?.AnhDaiDien || user?.avatar || user?.image || "",
+          avatarVersion: Date.now(),
+        };
+        setUser(updatedUser);
+        localStorage.setItem("user", JSON.stringify(updatedUser));
+        window.dispatchEvent(new CustomEvent("user-updated", { detail: updatedUser }));
+        setSelectedImageFile(null);
+        alert("Cập nhật ảnh đại diện thành công!");
+      } else {
+        alert(res?.message || "Không thể cập nhật ảnh đại diện.");
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Upload ảnh thất bại. Vui lòng thử lại.");
+    } finally {
+      setIsUploading(false);
+    }
   }
 
   async function handlePasswordSubmit(e) {
@@ -183,7 +305,7 @@ export default function ProfilePage() {
   };
 
   return (
-    <MainLayout>
+    <MainLayout role={getCurrentRole()}>
       {/* Tiêu đề trang */}
       <div className="mb-6">
         <h2 className="text-2xl font-bold text-gray-800">Trang cá nhân</h2>
@@ -194,27 +316,101 @@ export default function ProfilePage() {
         
         {/* CỘT TRÁI: HIỂN THỊ AVATAR & TRẠNG THÁI TÀI KHOẢN */}
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 text-center">
-          <div 
-            className="w-20 h-20 mx-auto mb-4 rounded-full overflow-hidden bg-pink-600 text-white flex items-center justify-center text-2xl font-bold shadow-md cursor-zoom-in hover:opacity-90 transition-all hover:scale-105"
-            onClick={() => anhDaiDien && setZoomedImage(String(anhDaiDien).startsWith('http') ? anhDaiDien : `${SERVER_URL}${String(anhDaiDien).startsWith('/') ? '' : '/'}${anhDaiDien}`)}
-          >
-            {anhDaiDien ? (
-              <img 
-                src={
-                  String(anhDaiDien).startsWith('http') 
-                    ? anhDaiDien 
-                    : `${SERVER_URL}${String(anhDaiDien).startsWith('/') ? '' : '/'}${anhDaiDien}`
-                } 
-                alt="avatar" 
-                className="w-full h-full object-cover" 
+          <div className="relative mx-auto mb-3 flex h-32 w-32 items-center justify-center overflow-hidden rounded-full bg-gradient-to-br from-pink-400 via-rose-400 to-orange-300 text-3xl font-bold text-white shadow-xl ring-4 ring-white group">
+            {selectedImageFile ? (
+              <div className="absolute inset-0 rounded-full border border-white/40 shadow-[inset_0_0_0_3px_rgba(255,255,255,0.35)]" />
+            ) : null}
+            {selectedImageFile ? (
+              <img
+                src={URL.createObjectURL(selectedImageFile)}
+                alt="preview avatar"
+                className="h-full w-full cursor-zoom-in object-cover bg-white/10"
+                style={{
+                  objectPosition: `${cropPosition.x}% ${cropPosition.y}%`,
+                  transform: `scale(${zoom})`,
+                  transformOrigin: `${cropPosition.x}% ${cropPosition.y}%`
+                }}
+                onClick={() => setZoomedImage(URL.createObjectURL(selectedImageFile))}
+              />
+            ) : anhDaiDien ? (
+              <img
+                src={getAvatarUrl(anhDaiDien, user?.avatarVersion || Date.now())}
+                alt="avatar"
+                className="h-full w-full cursor-zoom-in object-cover bg-white/10"
+                onClick={() => setZoomedImage(getAvatarUrl(anhDaiDien, user?.avatarVersion || Date.now()))}
                 onError={(e) => { e.target.src = "https://i.pravatar.cc/150?img=68"; }}
               />
             ) : (
-              getAvatarInitials()
+              <span className="cursor-default">{getAvatarInitials()}</span>
             )}
+
+            <label className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer text-white text-xs font-bold">
+              Chọn ảnh
+              <input type="file" accept="image/*" className="hidden" onChange={handleImageChange} />
+            </label>
           </div>
-          
+
           <h3 className="text-base font-bold text-gray-800">{tenNhanVien || "Chưa cập nhật tên"}</h3>
+
+          {selectedImageFile && (
+            <div className="mt-3 rounded-2xl border border-gray-100 bg-gray-50 p-3 text-left text-[11px] text-gray-600 shadow-sm">
+              <p className="mb-2 text-[10px] text-gray-400">Kéo để căn khung và zoom để ảnh vừa khung tròn hơn.</p>
+              <label className="mb-1 block text-[10px] font-semibold uppercase tracking-wider text-gray-400">Căn ngang</label>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={cropPosition.x}
+                onChange={(e) => setCropPosition((prev) => ({ ...prev, x: Number(e.target.value) }))}
+                className="w-full accent-blue-600"
+              />
+              <label className="mb-1 mt-2 block text-[10px] font-semibold uppercase tracking-wider text-gray-400">Căn dọc</label>
+              <input
+                type="range"
+                min="0"
+                max="100"
+                value={cropPosition.y}
+                onChange={(e) => setCropPosition((prev) => ({ ...prev, y: Number(e.target.value) }))}
+                className="w-full accent-blue-600"
+              />
+              <label className="mb-1 mt-2 block text-[10px] font-semibold uppercase tracking-wider text-gray-400">Zoom</label>
+              <input
+                type="range"
+                min="1"
+                max="2"
+                step="0.05"
+                value={zoom}
+                onChange={(e) => setZoom(Number(e.target.value))}
+                className="w-full accent-pink-500"
+              />
+              <div className="mt-2 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setCropPosition({ x: 50, y: 50 })}
+                  className="rounded-lg border border-gray-200 bg-white px-3 py-1 text-[10px] font-bold text-gray-600 hover:bg-gray-100"
+                >
+                  Đặt giữa
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setZoom(1)}
+                  className="rounded-lg border border-gray-200 bg-white px-3 py-1 text-[10px] font-bold text-gray-600 hover:bg-gray-100"
+                >
+                  Zoom mặc định
+                </button>
+              </div>
+            </div>
+          )}
+
+          {selectedImageFile && (
+            <button
+              onClick={handleUploadAvatar}
+              disabled={isUploading}
+              className="mt-3 px-4 py-2 bg-blue-600 text-white text-xs font-bold rounded-xl hover:bg-blue-700 transition-all shadow-sm disabled:opacity-50"
+            >
+              {isUploading ? "Đang tải lên..." : "Tải ảnh đại diện"}
+            </button>
+          )}
           
           <p className="text-[11px] font-bold text-blue-600 bg-blue-50 px-2.5 py-0.5 rounded-md inline-block mt-2 border border-blue-100 uppercase tracking-wider">
             {tenVaiTro}
@@ -456,12 +652,16 @@ export default function ProfilePage() {
           className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 p-4 animate-fade-in"
           onClick={() => setZoomedImage(null)}
         >
-          <div className="relative max-w-2xl max-h-[80vh]">
-            <button className="absolute -top-10 right-0 text-white hover:text-gray-300 font-bold text-xl">✕ Đóng</button>
-            <img 
-              src={zoomedImage} 
-              alt="Large view" 
-              className="w-full h-full object-contain rounded-full border-4 border-white shadow-2xl" 
+          <div className="relative max-w-3xl max-h-[85vh] rounded-3xl bg-white/10 p-3 shadow-2xl">
+            <button
+              type="button"
+              onClick={() => setZoomedImage(null)}
+              className="absolute -top-11 right-0 text-sm font-bold text-white hover:text-gray-200"
+            >✕ Đóng</button>
+            <img
+              src={zoomedImage}
+              alt="Large view"
+              className="max-h-[80vh] w-full max-w-2xl rounded-2xl border border-white/10 object-contain bg-white shadow-2xl"
             />
           </div>
         </div>
