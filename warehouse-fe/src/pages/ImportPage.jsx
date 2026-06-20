@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useRef } from "react";
 import MainLayout from "../layouts/MainLayout";
 import DataTable from "../components/DataTable";
 import StatusBadge from "../components/StatusBadge";
@@ -9,10 +9,11 @@ import {
   updatePhieuNhap, 
   getChiTietPhieuNhap
 } from "../services/phieuNhapService";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 
 export default function ImportPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const [phieuNhapList, setPhieuNhapList] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -30,6 +31,7 @@ export default function ImportPage() {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
   const [pageInput, setPageInput] = useState("1");
+  const hasPrefilled = useRef(false); // Flag để tránh lặp lại logic pre-fill
 
   const [isViewModalOpen, setIsViewModalOpen] = useState(false);
   const [selectedPhieu, setSelectedPhieu] = useState(null);
@@ -239,6 +241,56 @@ export default function ImportPage() {
     };
     loadViTriKho();
   }, []);
+
+  // 🚀 LOGIC ĐÓN SẢN PHẨM TỪ BÁO CÁO (THÔNG MINH HÓA PRE-FILL)
+  useEffect(() => {
+    // Đợi đầy đủ Master Data (Sản phẩm, Vị trí, NCC, Kho) để điền form chính xác 100%
+    if (location.state?.action === "PREFILL_IMPORT" && 
+        !hasPrefilled.current && 
+        allProducts.length > 0 && 
+        viTriList.length > 0 && 
+        nhaCungCapList.length > 0 && 
+        khoList.length > 0) {
+          
+      const p = location.state.product;
+      
+      setModalMode("CREATE");
+      
+      // 1. Điền thông tin phiếu nhập tổng quát (Tự chọn NCC và Kho)
+      setFormData({
+        MaPhieuNhap: "",
+        MaPhieu: `PN-AUTO-${Date.now().toString().slice(-6)}`,
+        MaNhaCungCap: "",// 🌟 Tự động chọn NCC đầu tiên
+        MaKho: String(p.MaKho || "1"),
+        GhiChu: `Nhập bổ sung cho mặt hàng ${p.name} từ báo cáo tồn kho.`,
+      });
+
+      // 2. Đưa sản phẩm và vị trí kho vào bảng chi tiết ngay lập tức
+      const locCode = String(p.MaViTriCode || "").trim();
+      setCurrentChiTietList([{
+        MaSP: Number(p.MaSP),
+        TenSP: p.name, // Thêm trường hiển thị tên sản phẩm cho dễ nhìn
+        SoLuong: 0, // Mặc định số lượng bổ sung tối thiểu
+        DonGia: 0,
+        MaViTriCode: locCode || "VT001",
+        NgaySanXuat: null,
+        HanSuDung: null
+      }]);
+
+      // 3. 🌟 ĐỒNG BỘ TIÊU ĐIỂM: Điền luôn vào khu vực "Thêm nhanh" để người dùng thấy rõ Tên SP và Vị trí
+      setTempItem(prev => ({
+        ...prev,
+        MaSP: Number(p.MaSP),
+        MaViTriCode: locCode || "VT001"
+      }));
+
+      setIsFormModalOpen(true);
+      hasPrefilled.current = true;
+      
+      // Xóa state để khi refresh trang không bị mở lại modal cũ
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state, allProducts, viTriList, nhaCungCapList, khoList]);
 
   // 🚀 Tự động khôi phục bộ lọc trạng thái từ Dashboard (nếu có)
   useEffect(() => {
@@ -1211,10 +1263,12 @@ const handleOpenCreate = () => {
                           </div>
                           <div>
                             <p className="text-xs font-black text-blue-900">
-                              {getSelectedProductInfo?.name || "Sản phẩm đã chọn"}
+                             
+                    {getSelectedProductInfo?.TenSanPham || getSelectedProductInfo?.name || "Sản phẩm đã chọn"}
                             </p>
                             <p className="text-[10px] font-bold text-blue-500 font-mono uppercase">
-                              Mã SP: {getSelectedProductInfo?.code || "---"}
+                            
+                    Mã SP: {getSelectedProductInfo?.MaSP || getSelectedProductInfo?.code || "---"}
                             </p>
                           </div>
                         </div>

@@ -170,7 +170,7 @@ const deleteRole = async (req, res) => {
     const transaction = new sql.Transaction(pool);
 
     try {
-        const { MaVaiTro } = req.body;
+        const MaVaiTro = req.body.MaVaiTro || req.params.id;
 
         if (!MaVaiTro) {
             return res.status(400).json({ success: false, message: "Lỗi: Không nhận được MaVaiTro cần xóa!" });

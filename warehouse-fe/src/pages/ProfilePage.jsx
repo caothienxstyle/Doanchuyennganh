@@ -344,8 +344,7 @@ export default function ProfilePage() {
               <span className="cursor-default">{getAvatarInitials()}</span>
             )}
 
-            <label className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer text-white text-xs font-bold">
-              Chọn ảnh
+            <label className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer text-white text-xs font-bold">Chọn ảnh
               <input type="file" accept="image/*" className="hidden" onChange={handleImageChange} />
             </label>
           </div>

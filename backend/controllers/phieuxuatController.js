@@ -489,9 +489,17 @@ const getPhieuXuatDetail = async (req, res) => {
         const chiTietResult = await pool.request()
             .input("MaPhieuXuatID", sql.Int, infoPhieu.MaPhieuXuat)
             .query(`
-                SELECT ct.*, sp.TenSanPham
+                SELECT 
+                    ct.*, 
+                    sp.TenSanPham,
+                    vt.MaViTriCode,
+                    vt.KhuVuc,
+                    vt.DayKe,
+                    vt.Tang,
+                    vt.OKe
                 FROM ChiTietPhieuXuat ct
                 LEFT JOIN SanPham sp ON ct.MaSanPham = sp.MaSanPham
+                LEFT JOIN ViTriKho vt ON ct.MaViTri = vt.MaViTri
                 WHERE ct.MaPhieuXuat = @MaPhieuXuatID
             `);
 

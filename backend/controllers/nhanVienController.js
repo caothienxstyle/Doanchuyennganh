@@ -193,7 +193,7 @@ if (req.file) {
             .input("CCCD", sql.VarChar, CCCD || null)
             .input("DiaChi", sql.NVarChar, DiaChi || null)
             .input("AnhDaiDien", sql.NVarChar, AnhDaiDien || null)
-            .input("TrangThai", sql.Bit, TrangThai)
+            .input("TrangThai", sql.Bit, (TrangThai === true || TrangThai === 'true' || TrangThai === 1 || TrangThai === '1') ? 1 : 0)
             .query(`
                 UPDATE NhanVien
                 SET TenNhanVien = @TenNhanVien,

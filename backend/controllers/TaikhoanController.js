@@ -300,6 +300,9 @@ const updateTrangThai = async (req, res) => {
 
         const pool = await poolPromise;
 
+        // Đảm bảo ép kiểu boolean chính xác: chấp nhận cả boolean, string "true"/"false" hoặc number 1/0
+        const isActionActive = (TrangThai === true || TrangThai === 'true' || TrangThai === 1 || TrangThai === '1');
+
         const check = await pool.request()
             .input("MaTaiKhoan", sql.Int, parseInt(id))
             .query("SELECT TenDangNhap FROM TaiKhoan WHERE MaTaiKhoan = @MaTaiKhoan");
@@ -309,11 +312,11 @@ const updateTrangThai = async (req, res) => {
         }
 
         const { TenDangNhap } = check.recordset[0];
-        const label = TrangThai ? "mở khóa" : "khóa";
+        const label = isActionActive ? "mở khóa" : "khóa";
 
         await pool.request()
             .input("MaTaiKhoan",      sql.Int, parseInt(id))
-            .input("TrangThai",       sql.Bit, TrangThai ? 1 : 0)
+            .input("TrangThai",       sql.Bit, isActionActive ? 1 : 0)
             .query(`
                 UPDATE TaiKhoan
                 SET TrangThai = @TrangThai,
@@ -328,7 +331,11 @@ const updateTrangThai = async (req, res) => {
             console.error("⚠️ Lỗi ghi log:", logErr.message);
         }
 
-        return res.json({ success: true, message: `Đã ${label} tài khoản thành công!` });
+        return res.json({ 
+            success: true, 
+            message: `Đã ${label} tài khoản thành công!`,
+            data: { TrangThai: isActionActive } 
+        });
     } catch (error) {
         console.error("Lỗi cập nhật trạng thái tài khoản:", error);
         return res.status(500).json({ success: false, message: error.message });

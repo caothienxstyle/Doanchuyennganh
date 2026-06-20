@@ -1,13 +1,15 @@
 import { useEffect, useState, useMemo } from "react";
+import { useNavigate } from "react-router-dom";
 import MainLayout from "../layouts/MainLayout";
 import DataTable from "../components/DataTable";
 import StatusBadge from "../components/StatusBadge";
-import { getProducts } from "../services/productService";
+import { getProducts, deleteProduct } from "../services/productService";
 import axios from "axios";
-import { getTonKhoItems } from "../services/tonKhoService";
-import { Search, Package, BarChart3, AlertTriangle, ShieldAlert } from "lucide-react";
+import { getTonKhoItems, updateTonKhoItem, deleteTonKhoItem } from "../services/tonKhoService";
+import { Search, Package, BarChart3, AlertTriangle, ShieldAlert, Edit, Trash2, Loader2, Truck, DollarSign, Warehouse as WarehouseIcon } from "lucide-react";
 
 export default function ReportsPage() {
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   
@@ -26,6 +28,8 @@ export default function ReportsPage() {
   // Danh sách thống kê theo vị trí (dành cho Card 2)
   const [locationReportList, setLocationReportList] = useState([]);
   const [viTriList, setViTriList] = useState([]); // Danh sách vị trí kho để tra cứu
+  const [nhaCungCapList, setNhaCungCapList] = useState([]); // 🌟 Thêm NCC để làm phiếu nhập
+  const [khoList, setKhoList] = useState([]); // 🌟 Thêm Kho
 
   // 🔢 Trạng thái Phân trang & Tìm kiếm (Đồng bộ với ApprovePage)
   const [searchTerm, setSearchTerm] = useState("");
@@ -51,20 +55,27 @@ export default function ReportsPage() {
   async function loadReportData() {
     try {
       setLoading(true);
-      const [productsResult, tonKhoResult, viTriResult] = await Promise.allSettled([
-        getProducts(), getTonKhoItems(), axios.get("http://localhost:3000/vitrikho/danhsach", { headers: { Authorization: `Bearer ${getToken()}` } })
+      const [productsResult, tonKhoResult, viTriResult, nccResult, khoResult] = await Promise.allSettled([
+        getProducts(), 
+        getTonKhoItems(), 
+        axios.get("http://localhost:3000/vitrikho/danhsach", { headers: { Authorization: `Bearer ${getToken()}` } }),
+        axios.get("http://localhost:3000/nhacungcap/danhsach", { headers: { Authorization: `Bearer ${getToken()}` } }),
+        axios.get("http://localhost:3000/kho/danhsach", { headers: { Authorization: `Bearer ${getToken()}` } })
       ]);
 
       if (productsResult.status !== "fulfilled") {
         throw productsResult.reason;
       }
 
-      // 🌟 FIX: Đảm bảo trích xuất đúng mảng dữ liệu từ các kết quả API
       const products = productsResult.status === "fulfilled" ? (productsResult.value.data || productsResult.value || []) : [];
       const tonKhoItems = tonKhoResult.status === "fulfilled" ? (tonKhoResult.value.data || tonKhoResult.value || []) : [];
       const rawViTriList = viTriResult.status === "fulfilled" ? (viTriResult.value.data?.data || viTriResult.value.data || []) : [];
+      const nccs = nccResult.status === "fulfilled" ? (nccResult.value.data?.data || nccResult.value.data || []) : [];
+      const khos = khoResult.status === "fulfilled" ? (khoResult.value.data?.data || khoResult.value.data || []) : [];
       
       setViTriList(rawViTriList); // Lưu danh sách vị trí vào state
+      setNhaCungCapList(nccs);
+      setKhoList(khos);
 
       const viTriMap = new Map();
       if (Array.isArray(rawViTriList)) {
@@ -149,6 +160,10 @@ export default function ReportsPage() {
             minQuantity: product?.minQuantity ?? product?.SoLuongToiThieu ?? "—",
             location: locationStr,
             status: getInventoryStatus(item.qty, product?.minQuantity || product?.SoLuongToiThieu),
+            // Lưu các ID gốc phục vụ hành động sửa/xóa
+            rawMaKho: item.rawKho,
+            rawMaSanPham: item.pid,
+            rawMaViTriCode: item.vtCode
           };
         });
       
@@ -178,6 +193,9 @@ export default function ReportsPage() {
         const minQty = p.minQuantity || p.SoLuongToiThieu;
         const status = getInventoryStatus(totalQty, minQty);
 
+        // 🌟 LẤY VỊ TRÍ ĐẦU TIÊN ĐỂ HỖ TRỢ SỬA TỒN KHO TRỰC TIẾP TỪ BẢNG TỔNG HỢP
+        const firstRecord = normalizedInventory.find(item => item.pid === pIdStr);
+
         if (status === "Hết hàng") outOfStock++;
         if (status === "Sắp hết") lowStock++;
 
@@ -187,7 +205,12 @@ export default function ReportsPage() {
           quantity: totalQty,
           minQuantity: minQty ?? "—",
           location: stockSummary.has(pIdStr) ? "Đã phân bổ kho" : "Chưa có vị trí",
-          status: status
+          status: status,
+          rawMaSP: p.code || p.MaSP,
+          //  Thông tin tồn kho để đồng bộ payload
+          rawMaKho: firstRecord?.rawKho || 1,
+          rawMaSanPham: pIdStr,
+          rawMaViTriCode: firstRecord?.vtCode || "VT001"
         };
       });
 
@@ -211,6 +234,53 @@ export default function ReportsPage() {
     }
 
   }
+
+  // 🛠️ HÀM XỬ LÝ NGHIỆP VỤ TỒN KHO
+  const handleOpenEditInventory = (row) => {
+    // 🚀 THÔNG MINH HÓA: Chuyển hướng sang trang Nhập hàng kèm dữ liệu sản phẩm
+    navigate("/imports", {
+      state: {
+        action: "PREFILL_IMPORT",
+        product: {
+          MaSP: row.rawMaSanPham, // ID hệ thống phục vụ tạo phiếu
+          code: row.code,         // Mã hiển thị (VD: SP001)
+          name: row.name,         // Tên sản phẩm
+          MaKho: row.rawMaKho,
+          MaViTriCode: row.rawMaViTriCode
+        }
+      }
+    });
+  };
+
+  const handleDeleteInventory = async (row) => {
+    if (!window.confirm(`Xác nhận gỡ bỏ bản ghi tồn kho này?\nSản phẩm: ${row.name}\nVị trí: ${row.location}`)) return;
+    try {
+      await axios.delete("http://localhost:3000/tonkho/xoa", {
+        headers: { Authorization: `Bearer ${getToken()}` },
+        data: {
+          MaKho: Number(row.rawMaKho),
+          MaSanPham: Number(row.rawMaSanPham),
+          MaViTriCode: String(row.rawMaViTriCode).trim()
+        }
+      });
+      alert("Đã xóa bản ghi tồn kho.");
+      await loadReportData();
+    } catch (err) {
+      alert("Lỗi: " + (err?.response?.data?.message || err.message));
+    }
+  };
+
+  const handleDeleteProduct = async (row) => {
+    if (!window.confirm(`CẢNH BÁO: Xóa sản phẩm "${row.name}" sẽ xóa mọi dữ liệu tồn kho liên quan. Tiếp tục?`)) return;
+    try {
+      await axios.delete("http://localhost:3000/products/xoa", {
+        headers: { Authorization: `Bearer ${getToken()}` },
+        data: { MaSP: row.rawMaSP }
+      });
+      alert("Xóa sản phẩm thành công!");
+      await loadReportData();
+    } catch (err) { alert("Lỗi: " + err.message); }
+  };
 
   useEffect(() => {
     loadReportData();
@@ -292,6 +362,28 @@ export default function ReportsPage() {
         return (<StatusBadge status={value} />);
       }
     },
+    {
+      key: "actions",
+      label: "Hành động",
+      render: (_, row) => (
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={() => handleOpenEditInventory(row)}
+            className="p-1.5 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
+            title="Sửa số lượng tồn"
+          >
+            <Edit size={14} />
+          </button>
+          <button 
+            onClick={() => handleDeleteProduct(row)}
+            className="p-1.5 text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors"
+            title="Xóa sản phẩm"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
+      )
+    }
   ];
 
   // Định nghĩa cột cho chế độ xem chi tiết theo vị trí
@@ -322,6 +414,26 @@ export default function ReportsPage() {
         return (<StatusBadge status={value} />);
       }
     },
+    {
+      key: "actions",
+      label: "Thao tác",
+      render: (_, row) => (
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={() => handleOpenEditInventory(row)}
+            className="p-1.5 text-blue-600 bg-blue-50 hover:bg-blue-100 rounded-lg transition-colors"
+          >
+            <Edit size={14} />
+          </button>
+          <button 
+            onClick={() => handleDeleteInventory(row)}
+            className="p-1.5 text-red-600 bg-red-50 hover:bg-red-100 rounded-lg transition-colors"
+          >
+            <Trash2 size={14} />
+          </button>
+        </div>
+      )
+    }
   ];
 
   // Định nghĩa cột cho chế độ xem THỐNG KÊ THEO VỊ TRÍ KHO

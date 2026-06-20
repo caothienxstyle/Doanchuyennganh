@@ -1,11 +1,11 @@
 import { useState, useEffect, useMemo } from "react";
 import axios from "axios";
-import {
-  Plus, Trash2, ShieldAlert, FileText, Package, Save, Timer, FileInput, FileOutput, ArrowRight,
+import { 
+  Plus, Trash2, ShieldAlert, FileText, Package, Save, Timer, FileInput, FileOutput, ArrowRight, 
   CheckCircle, Loader2, Info, Users, Clock, Archive, Edit3, Search, Eye, FilePlus, ShieldCheck,
   AlertTriangle, Warehouse, MapPin, Hash, ClipboardList, RefreshCcw, Calendar, History, FilePlus2
 } from "lucide-react";
-import { getCurrentRole } from "../services/auth";
+import { getCurrentRole, ROLES } from "../services/auth";
 import MainLayout from "../layouts/MainLayout";
 import DataTable from "../components/DataTable";
 import { useLocation } from "react-router-dom";
@@ -14,6 +14,11 @@ export default function PhieubaohanhPage() {
   const role = getCurrentRole();
   const getToken = () => localStorage.getItem("token") || localStorage.getItem("accessToken") || "";
   const headers = { Authorization: `Bearer ${getToken()}` };
+
+  // Xác định quyền hạn để hiển thị nút xóa
+  const isAdmin = role === ROLES.admin || role === "Admin" || String(role) === "1";
+  const isManager = role === ROLES.manager || role === "Quản lý kho" || String(role) === "2";
+  const canDelete = isAdmin || isManager; // Admin và Quản lý đều có quyền xóa hồ sơ hết hạn
   const location = useLocation();
 
   // --- QUẢN LÝ DANH SÁCH & HIỂN THỊ ---
@@ -226,6 +231,32 @@ export default function PhieubaohanhPage() {
     };
     loadTicketDetail();
   }, [maChungTuGoc, loaiChungTuGoc, danhSachSP, danhSachPX, danhSachPN]);
+
+  // Hàm xử lý xóa phiếu bảo hành
+  const handleDeletePhieuBaoHanh = async (maPhieuBH, maPhieuHienThi) => {
+    if (!canDelete) {
+      alert("Bạn không có quyền thực hiện thao tác này!");
+      return;
+    }
+    if (!window.confirm(`Bạn có chắc chắn muốn xóa phiếu bảo hành #${maPhieuHienThi} này không? Thao tác này sẽ xóa vĩnh viễn và không thể hoàn tác.`)) {
+      return;
+    }
+
+    try {
+      setLoadingHistory(true);
+      const res = await axios.delete(`http://localhost:3000/phieubaohanh/xoa/${maPhieuBH}`, { headers });
+      if (res.data.success) {
+        alert(res.data.message || "Xóa phiếu bảo hành thành công!");
+        fetchHistory(); // Tải lại danh sách sau khi xóa
+      } else {
+        alert(res.data.message || "Không thể xóa phiếu bảo hành.");
+      }
+    } catch (err) {
+      alert("Lỗi khi xóa phiếu bảo hành: " + (err.response?.data?.message || err.message));
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
 
   const currentExpiryPreview = useMemo(() => {
     const t = (loaiChungTuGoc === "EXPORT" ? danhSachPX : danhSachPN).find(ticket => String(ticket.MaPhieu) === String(maChungTuGoc));
@@ -626,11 +657,24 @@ export default function PhieubaohanhPage() {
     {
       key: "actions",
       label: "Thao tác",
-      render: (_, row) => (
-        <button onClick={() => handleOpenDetail(row)} className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-xs font-bold hover:bg-blue-100 transition-all">
-          <Eye size={16}/>
-        </button>
-      )
+      render: (_, row) => {
+        const hanBH = row.HanBaoHanh ? new Date(row.HanBaoHanh) : null; // Chuyển đổi sang đối tượng Date
+        const isValidDate = hanBH instanceof Date && !isNaN(hanBH); // Kiểm tra xem có phải là ngày hợp lệ không
+        const isExpired = isValidDate && hanBH < new Date(); // Chỉ kiểm tra hết hạn nếu là ngày hợp lệ
+
+        return (
+          <div className="flex items-center gap-2">
+            <button onClick={() => handleOpenDetail(row)} className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-50 text-blue-600 rounded-lg text-xs font-bold hover:bg-blue-100 transition-all" title="Xem chi tiết">
+              <Eye size={16}/>
+            </button>
+            {canDelete && isExpired && (
+              <button onClick={() => handleDeletePhieuBaoHanh(row.MaPhieuBH || row.id, row.MaPhieuBH || row.id)} className="flex items-center gap-1.5 px-3 py-1.5 bg-red-50 text-red-600 rounded-lg text-xs font-bold hover:bg-red-100 transition-all" title="Xóa hồ sơ hết hạn">
+                <Trash2 size={16}/>
+              </button>
+            )}
+          </div>
+        );
+      }
     }
   ];
 
@@ -793,7 +837,7 @@ export default function PhieubaohanhPage() {
           >
             <div className="w-10 h-10 rounded-xl bg-blue-50 flex items-center justify-center text-blue-600"><History size={20}/></div>
             <div>
-              <p className="text-[10px] font-bold text-gray-400 uppercase">Tổng số máy BH</p>
+              <p className="text-[10px] font-bold text-gray-400 uppercase">Tổng số lượng</p>
               <h3 className="text-xl font-bold text-gray-800">{calculateTotalMachines(historyNormalized)}</h3>
             </div>
           </div>
@@ -803,7 +847,7 @@ export default function PhieubaohanhPage() {
             className={`cursor-pointer transition-all hover:scale-[1.02] bg-white p-4 rounded-2xl border flex items-center gap-4 shadow-sm ${activeHistoryTab === "EXPORT" ? "border-orange-500 ring-2 ring-orange-500/10 shadow-sm" : "border-gray-100"}`}
           >
             <div className="w-10 h-10 rounded-xl bg-orange-50 flex items-center justify-center text-orange-600"><FileOutput size={20}/></div>
-            <div><p className="text-[10px] font-bold text-gray-400 uppercase">Máy từ PX</p><h3 className="text-xl font-bold text-orange-600">{calculateTotalMachines(historyNormalized.filter(p => p.LoaiPhieuBH === "KHACH_HANG"))}</h3></div>
+            <div><p className="text-[10px] font-bold text-gray-400 uppercase">Số lượng phiếu xuất</p><h3 className="text-xl font-bold text-orange-600">{calculateTotalMachines(historyNormalized.filter(p => p.LoaiPhieuBH === "KHACH_HANG"))}</h3></div>
           </div>
 
           <div
@@ -811,7 +855,7 @@ export default function PhieubaohanhPage() {
             className={`cursor-pointer transition-all hover:scale-[1.02] bg-white p-4 rounded-2xl border flex items-center gap-4 shadow-xs ${activeHistoryTab === "IMPORT" ? "border-emerald-500 ring-2 ring-emerald-500/10 shadow-sm" : "border-gray-100"}`}
           >
             <div className="w-10 h-10 rounded-xl bg-emerald-50 flex items-center justify-center text-emerald-600"><FileInput size={20}/></div>
-            <div><p className="text-[10px] font-bold text-gray-400 uppercase">Máy từ PN</p><h3 className="text-xl font-bold text-emerald-600">{calculateTotalMachines(historyNormalized.filter(p => p.LoaiPhieuBH === "NHA_CUNG_CAP"))}</h3></div>
+            <div><p className="text-[10px] font-bold text-gray-400 uppercase">Số lượng phiếu nhập</p><h3 className="text-xl font-bold text-emerald-600">{calculateTotalMachines(historyNormalized.filter(p => p.LoaiPhieuBH === "NHA_CUNG_CAP"))}</h3></div>
           </div>
 
           <div

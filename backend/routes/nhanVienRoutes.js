@@ -22,8 +22,8 @@ router.get("/chitiet/:id", authenticate, authorize("Admin", "Quản lý kho", "N
 // 3. Thêm mới nhân viên -> CHỈ Admin và Quản lý kho được thực hiện
 router.post("/taonhanvien", authenticate, authorize("Admin", "Quản lý kho"), upload.single("AnhDaiDien"), createNhanVien);
 
-// 4. Cập nhật thông tin nhân viên -> CHỈ Admin và Quản lý kho được thực hiện
-router.put("/capnhat/:id", authenticate, authorize("Admin", "Quản lý kho"), upload.single("AnhDaiDien"), updateNhanVien);
+// 4. Cập nhật thông tin nhân viên -> Admin, Quản lý và Nhân viên được thực hiện
+router.put("/capnhat/:id", authenticate, authorize("Admin", "Quản lý kho", "Nhân viên kho"), upload.single("AnhDaiDien"), updateNhanVien);
 
 // 5. Xóa mềm nhân viên -> CHỈ Admin mới có quyền tối cao này
 router.delete("/xoanhanvien/:id", authenticate, authorize("Admin"), deleteNhanVien);
